@@ -41,6 +41,7 @@ impl AnyProvider for GeminiProvider {
         source: &'a str,
         target_language: Language,
         model: &'a str,
+        paged: bool,
         custom_system_prompt: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + 'a>> {
         Box::pin(async move {
@@ -52,7 +53,7 @@ impl AnyProvider for GeminiProvider {
             let body = GenerateRequest {
                 system_instruction: SystemInstruction {
                     parts: vec![Part {
-                        text: resolve_system_prompt(custom_system_prompt, target_language),
+                        text: resolve_system_prompt(custom_system_prompt, target_language, paged),
                     }],
                 },
                 contents: vec![Content {

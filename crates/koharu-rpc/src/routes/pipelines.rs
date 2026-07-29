@@ -45,6 +45,8 @@ pub struct StartPipelineRequest {
     #[serde(default)]
     pub target_language: Option<String>,
     #[serde(default)]
+    pub paged: Option<bool>,
+    #[serde(default)]
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub default_font: Option<String>,
@@ -83,6 +85,7 @@ async fn start_pipeline(
         steps: req.steps,
         options: PipelineRunOptions {
             target_language: req.target_language,
+            paged: req.paged,
             system_prompt: req.system_prompt,
             default_font: req.default_font,
             text_node_ids: req.text_node_ids,

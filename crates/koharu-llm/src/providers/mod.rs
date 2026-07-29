@@ -5,14 +5,25 @@ use std::sync::Arc;
 use anyhow::Context;
 use reqwest_middleware::ClientWithMiddleware;
 
-use crate::prompt::{BLOCK_TAG_INSTRUCTIONS, system_prompt};
+use crate::prompt::{BLOCK_TAG_INSTRUCTIONS, PAGED_BLOCK_TAG_INSTRUCTIONS, system_prompt};
 use crate::{Language, language::tags as language_tags, supported_locales};
 
 /// Resolve the effective system prompt: custom (with block instructions appended) or default.
-pub(crate) fn resolve_system_prompt(custom: Option<&str>, target_language: Language) -> String {
+pub(crate) fn resolve_system_prompt(
+    custom: Option<&str>,
+    target_language: Language,
+    paged: bool,
+) -> String {
     match custom {
-        Some(p) if !p.trim().is_empty() => format!("{p} {BLOCK_TAG_INSTRUCTIONS}"),
-        _ => system_prompt(target_language),
+        Some(p) if !p.trim().is_empty() => {
+            let instructions = if paged {
+                PAGED_BLOCK_TAG_INSTRUCTIONS
+            } else {
+                BLOCK_TAG_INSTRUCTIONS
+            };
+            format!("{p} {instructions}")
+        }
+        _ => system_prompt(target_language, paged),
     }
 }
 
@@ -105,6 +116,7 @@ pub trait AnyProvider: Send + Sync {
         source: &'a str,
         target_language: Language,
         model: &'a str,
+        paged: bool,
         custom_system_prompt: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + 'a>>;
 }

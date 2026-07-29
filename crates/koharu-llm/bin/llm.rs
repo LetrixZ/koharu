@@ -66,6 +66,9 @@ struct Args {
     /// override locale for translation models
     #[arg(long, default_value = "zh-CN")]
     locale: String,
+
+    #[arg(long, default_value_t = false)]
+    paged: bool,
 }
 
 fn init_tracing() {
@@ -110,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
         ..args.model.default_generate_options()
     };
 
-    let out = llm.generate(&args.prompt, &opts, target_language, None)?;
+    let out = llm.generate(&args.prompt, &opts, target_language, args.paged, None)?;
 
     println!("{}", out);
     println!(

@@ -24,6 +24,8 @@ use koharu_core::{Op, PageId, PipelineStep};
 use koharu_runtime::RuntimeManager;
 use tracing::Instrument;
 
+use crate::pipeline::engines::llm_translate;
+
 /// Observer for pipeline progress. `step_id` is the engine id of the step
 /// about to run (or just finished); step_index / page_index are 0-based.
 pub type ProgressSink = Arc<dyn Fn(ProgressTick) + Send + Sync>;
@@ -149,6 +151,42 @@ pub async fn run(
 
     let total_pages = pages.len().max(1);
     let total_steps = order.len().max(1);
+
+    let is_paged = spec.options.paged.unwrap_or(false);
+    let translator_indices: Vec<usize> = order
+        .iter()
+        .enumerate()
+        .filter(|&(_, &i)| infos[i].produces.contains(&Artifact::Translations))
+        .map(|(seq, _)| seq)
+        .collect();
+    let has_paged_translator = is_paged && !translator_indices.is_empty();
+
+    // ── Paged mode ──────────────────────────────────────────────────
+    //
+    // When `paged=true` and there is a translator step, we restructure
+    // execution so that all box-detection + OCR steps run on every page
+    // before the translator runs once across all pages. This ensures all
+    // pages have their detected text ready when the LLM call is made.
+    //
+    //   Phase 1: non-translator steps run on all pages (step-first)
+    //   Phase 2: translator step runs once across all pages
+    //   Phase 3: remaining steps run on all pages (step-first)
+    //
+    // In normal (non-paged) mode the loop is page-first so each page
+    // completes all steps before the next page starts.
+
+    if has_paged_translator {
+        let result = run_paged(
+            session, registry, &runtime, cpu, llm, renderer,
+            &spec, &infos, &order, &pages, translator_indices,
+            cancel, progress, warnings,
+        )
+        .await?;
+        return Ok(result);
+    }
+
+    // ── Normal mode (page-first) ────────────────────────────────────
+
     let total_units = (total_pages * total_steps) as u64;
     let mut completed: u64 = 0;
     let mut warning_count: usize = 0;
@@ -176,101 +214,39 @@ pub async fn run(
 
             // The page must still exist (user may have deleted it mid-run).
             if !session.scene.read().pages.contains_key(page_id) {
-                // Skip the remaining steps for a deleted page and credit all
-                // of them against total_units so progress still reaches 100%.
                 completed += (total_steps - seq) as u64;
                 continue 'pages;
             }
 
-            let engine = match registry.get(info.id, &runtime, cpu).await {
-                Ok(e) => e,
-                Err(err) => {
-                    // Engine *load* failure: same recovery as a run failure.
-                    report_step_failure(
-                        info.id,
-                        page_id,
-                        seq,
-                        page_index,
-                        total_pages,
-                        total_steps,
-                        &err,
-                        &mut warning_count,
-                        warnings.as_ref(),
-                    );
-                    completed += (total_steps - seq) as u64;
-                    continue 'pages;
-                }
-            };
-            let scene_snap = session.scene_snapshot();
-            let ctx = EngineCtx {
-                scene: &scene_snap,
-                page: *page_id,
-                blobs: &session.blobs,
-                runtime: &runtime,
-                cancel: &cancel,
-                options: &spec.options,
-                llm: &llm,
-                renderer: &renderer,
-            };
-            let step_result = async { engine.run(ctx).await }
-                .instrument(tracing::info_span!("step", engine = info.id, page = %page_id))
-                .await;
-            let ops = match step_result {
-                Ok(ops) => ops,
-                Err(err) => {
-                    report_step_failure(
-                        info.id,
-                        page_id,
-                        seq,
-                        page_index,
-                        total_pages,
-                        total_steps,
-                        &err,
-                        &mut warning_count,
-                        warnings.as_ref(),
-                    );
-                    // Subsequent steps on this page almost always consume the
-                    // failed step's artifact; skip the rest and move on.
-                    completed += (total_steps - seq) as u64;
-                    continue 'pages;
-                }
-            };
-            completed += 1;
-            if ops.is_empty() {
-                continue;
-            }
-            let batch = Op::Batch {
-                ops,
-                label: format!("{}: page {}", info.id, page_id),
-            };
-            if let Err(err) = session.apply(batch) {
-                report_step_failure(
-                    info.id,
-                    page_id,
-                    seq,
-                    page_index,
-                    total_pages,
-                    total_steps,
-                    &err,
-                    &mut warning_count,
-                    warnings.as_ref(),
-                );
+            if let Err(wc) = run_single_step(
+                session.as_ref(),
+                registry.as_ref(),
+                &runtime,
+                cpu,
+                &llm,
+                &renderer,
+                &spec,
+                info,
+                *page_id,
+                seq,
+                page_index,
+                total_pages,
+                total_steps,
+                &cancel,
+                &mut completed,
+                &mut warning_count,
+                progress.as_ref(),
+                warnings.as_ref(),
+            )
+            .await
+            {
+                warning_count += wc;
                 continue 'pages;
             }
         }
     }
 
-    if let Some(sink) = progress.as_ref() {
-        sink(ProgressTick {
-            step: None,
-            step_id: String::new(),
-            step_index: total_steps.saturating_sub(1),
-            total_steps,
-            page_index: total_pages.saturating_sub(1),
-            total_pages,
-            overall_percent: 100,
-        });
-    }
+    emit_progress_done(progress.as_ref(), total_steps, total_pages);
     Ok(RunOutcome { warning_count })
 }
 
@@ -300,6 +276,400 @@ fn report_step_failure(
             page_index,
             total_pages,
             message: format!("{err:#}"),
+        });
+    }
+}
+
+/// Run one engine step on one page. Returns the extra warning count on
+/// failure (0 on success) so the caller can accumulate it.
+#[allow(clippy::too_many_arguments)]
+async fn run_single_step(
+    session: &ProjectSession,
+    registry: &Registry,
+    runtime: &RuntimeManager,
+    cpu: bool,
+    llm: &llm::Model,
+    renderer: &renderer::Renderer,
+    spec: &PipelineSpec,
+    info: &EngineInfo,
+    page_id: PageId,
+    seq: usize,
+    page_index: usize,
+    total_pages: usize,
+    total_steps: usize,
+    cancel: &AtomicBool,
+    completed: &mut u64,
+    warning_count: &mut usize,
+    progress: Option<&ProgressSink>,
+    warnings: Option<&WarningSink>,
+) -> Result<(), usize> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(0);
+    }
+
+    if let Some(sink) = progress {
+        let total_units = (total_pages * total_steps) as u64;
+        let percent = ((*completed * 100) / total_units.max(1)).min(100) as u8;
+        sink(ProgressTick {
+            step: step_for(info),
+            step_id: info.id.to_string(),
+            step_index: seq,
+            total_steps,
+            page_index,
+            total_pages,
+            overall_percent: percent,
+        });
+        tokio::task::yield_now().await;
+    }
+
+    let engine = match registry.get(info.id, runtime, cpu).await {
+        Ok(e) => e,
+        Err(err) => {
+            report_step_failure(
+                info.id,
+                &page_id,
+                seq,
+                page_index,
+                total_pages,
+                total_steps,
+                &err,
+                warning_count,
+                warnings,
+            );
+            *completed += (total_steps - seq) as u64;
+            return Err(1);
+        }
+    };
+
+    let scene_snap = session.scene_snapshot();
+    let ctx = EngineCtx {
+        scene: &scene_snap,
+        page: page_id,
+        blobs: &session.blobs,
+        runtime,
+        cancel,
+        options: &spec.options,
+        llm,
+        renderer,
+    };
+    let step_result = async { engine.run(ctx).await }
+        .instrument(tracing::info_span!("step", engine = info.id, page = %page_id))
+        .await;
+    let ops = match step_result {
+        Ok(ops) => ops,
+        Err(err) => {
+            report_step_failure(
+                info.id,
+                &page_id,
+                seq,
+                page_index,
+                total_pages,
+                total_steps,
+                &err,
+                warning_count,
+                warnings,
+            );
+            *completed += (total_steps - seq) as u64;
+            return Err(1);
+        }
+    };
+    *completed += 1;
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let batch = Op::Batch {
+        ops,
+        label: format!("{}: page {}", info.id, page_id),
+    };
+    if let Err(err) = session.apply(batch) {
+        report_step_failure(
+            info.id,
+            &page_id,
+            seq,
+            page_index,
+            total_pages,
+            total_steps,
+            &err,
+            warning_count,
+            warnings,
+        );
+        return Err(1);
+    }
+    Ok(())
+}
+
+/// Run the translator step once across all pages (paged mode).
+/// Collects text from every page, sends a single LLM request, and applies
+/// translation ops for all pages.
+#[allow(clippy::too_many_arguments)]
+async fn run_paged_translate(
+    session: &ProjectSession,
+    spec: &PipelineSpec,
+    llm: &llm::Model,
+    info: &EngineInfo,
+    pages: &[PageId],
+    seq: usize,
+    _page_index: usize,
+    total_pages: usize,
+    total_steps: usize,
+    cancel: &AtomicBool,
+    completed: &mut u64,
+    warning_count: &mut usize,
+    progress: Option<&ProgressSink>,
+    warnings: Option<&WarningSink>,
+) -> Result<(), usize> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(0);
+    }
+
+    if let Some(sink) = progress {
+        let total_units = ((total_steps - 1) * total_pages + 1) as u64; // translator counts as 1
+        let percent = ((*completed * 100) / total_units.max(1)).min(100) as u8;
+        sink(ProgressTick {
+            step: step_for(info),
+            step_id: info.id.to_string(),
+            step_index: seq,
+            total_steps,
+            page_index: 0,
+            total_pages,
+            overall_percent: percent,
+        });
+        tokio::task::yield_now().await;
+    }
+
+    let scene_snap = session.scene_snapshot();
+    let first_page = pages.first().copied();
+    let ops = match llm_translate::run_paged(
+        &scene_snap,
+        pages,
+        &spec.options,
+        llm,
+    )
+    .await
+    {
+        Ok(ops) => ops,
+        Err(err) => {
+            if let Some(pid) = first_page {
+                report_step_failure(
+                    info.id,
+                    &pid,
+                    seq,
+                    0,
+                    total_pages,
+                    total_steps,
+                    &err,
+                    warning_count,
+                    warnings,
+                );
+            }
+            *completed += 1; // count the translator step
+            return Err(1);
+        }
+    };
+    *completed += 1;
+
+    if ops.is_empty() {
+        return Ok(());
+    }
+
+    let batch = Op::Batch {
+        ops,
+        label: format!("{}: all pages (paged)", info.id),
+    };
+    if let Err(err) = session.apply(batch) {
+        if let Some(pid) = first_page {
+            report_step_failure(
+                info.id,
+                &pid,
+                seq,
+                0,
+                total_pages,
+                total_steps,
+                &err,
+                warning_count,
+                warnings,
+            );
+        }
+        return Err(1);
+    }
+    Ok(())
+}
+
+/// Run the full pipeline in paged mode. Non-translator steps run on all
+/// pages (step-first), the translator step runs once across all pages,
+/// then remaining steps run on all pages.
+#[allow(clippy::too_many_arguments)]
+async fn run_paged(
+    session: Arc<ProjectSession>,
+    registry: Arc<Registry>,
+    runtime: &RuntimeManager,
+    cpu: bool,
+    llm: Arc<llm::Model>,
+    renderer: Arc<renderer::Renderer>,
+    spec: &PipelineSpec,
+    infos: &[&EngineInfo],
+    order: &[usize],
+    pages: &[PageId],
+    translator_indices: Vec<usize>,
+    cancel: Arc<AtomicBool>,
+    progress: Option<ProgressSink>,
+    warnings: Option<WarningSink>,
+) -> Result<RunOutcome> {
+    let total_pages = pages.len().max(1);
+    let total_steps = order.len().max(1);
+    // Count translator steps as 1 unit each (not per-page).
+    let translator_count = translator_indices.len() as u64;
+    let total_units = ((total_steps as u64 - translator_count) * total_pages as u64) + translator_count;
+    let mut completed: u64 = 0;
+    let mut warning_count: usize = 0;
+
+    for (seq, &i) in order.iter().enumerate() {
+        let info = infos[i];
+        let is_translator = translator_indices.contains(&seq);
+
+        if is_translator {
+            // Phase 2: translator step — run once across all pages.
+            let _ = run_paged_translate(
+                &session,
+                spec,
+                &llm,
+                info,
+                pages,
+                seq,
+                0, // page_index is 0 for the paged step
+                total_pages,
+                total_steps,
+                &cancel,
+                &mut completed,
+                &mut warning_count,
+                progress.as_ref(),
+                warnings.as_ref(),
+            )
+            .await;
+            // Note: run_paged_translate returns Err(extra_warnings) on
+            // failure but the pipeline should continue with remaining
+            // steps. We already accumulated warning_count inside.
+            continue;
+        }
+
+        // Phase 1 & 3: non-translator steps run on each page.
+        for (page_index, &page_id) in pages.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                bail!("cancelled");
+            }
+
+            if let Some(sink) = progress.as_ref() {
+                let percent = ((completed * 100) / total_units.max(1)).min(100) as u8;
+                sink(ProgressTick {
+                    step: step_for(info),
+                    step_id: info.id.to_string(),
+                    step_index: seq,
+                    total_steps,
+                    page_index,
+                    total_pages,
+                    overall_percent: percent,
+                });
+                tokio::task::yield_now().await;
+            }
+
+            // Page may have been deleted mid-run.
+            if !session.scene.read().pages.contains_key(&page_id) {
+                completed += total_steps as u64 - seq as u64 - 1;
+                // ^ approximate: remaining non-translator steps for this page
+                continue;
+            }
+
+            let engine = match registry.get(info.id, runtime, cpu).await {
+                Ok(e) => e,
+                Err(err) => {
+                    report_step_failure(
+                        info.id,
+                        &page_id,
+                        seq,
+                        page_index,
+                        total_pages,
+                        total_steps,
+                        &err,
+                        &mut warning_count,
+                        warnings.as_ref(),
+                    );
+                    // Skip remaining steps for this page.
+                    completed += total_steps as u64 - seq as u64 - 1;
+                    continue;
+                }
+            };
+
+            let scene_snap = session.scene_snapshot();
+            let ctx = EngineCtx {
+                scene: &scene_snap,
+                page: page_id,
+                blobs: &session.blobs,
+                runtime,
+                cancel: &cancel,
+                options: &spec.options,
+                llm: &llm,
+                renderer: &renderer,
+            };
+            let step_result = async { engine.run(ctx).await }
+                .instrument(tracing::info_span!("step", engine = info.id, page = %page_id))
+                .await;
+            let ops = match step_result {
+                Ok(ops) => ops,
+                Err(err) => {
+                    report_step_failure(
+                        info.id,
+                        &page_id,
+                        seq,
+                        page_index,
+                        total_pages,
+                        total_steps,
+                        &err,
+                        &mut warning_count,
+                        warnings.as_ref(),
+                    );
+                    completed += total_steps as u64 - seq as u64 - 1;
+                    continue;
+                }
+            };
+            completed += 1;
+            if ops.is_empty() {
+                continue;
+            }
+            let batch = Op::Batch {
+                ops,
+                label: format!("{}: page {}", info.id, page_id),
+            };
+            if let Err(err) = session.apply(batch) {
+                report_step_failure(
+                    info.id,
+                    &page_id,
+                    seq,
+                    page_index,
+                    total_pages,
+                    total_steps,
+                    &err,
+                    &mut warning_count,
+                    warnings.as_ref(),
+                );
+                continue;
+            }
+        }
+    }
+
+    emit_progress_done(progress.as_ref(), total_steps, total_pages);
+    Ok(RunOutcome { warning_count })
+}
+
+fn emit_progress_done(sink: Option<&ProgressSink>, total_steps: usize, total_pages: usize) {
+    if let Some(sink) = sink {
+        sink(ProgressTick {
+            step: None,
+            step_id: String::new(),
+            step_index: total_steps.saturating_sub(1),
+            total_steps,
+            page_index: total_pages.saturating_sub(1),
+            total_pages,
+            overall_percent: 100,
         });
     }
 }

@@ -95,6 +95,7 @@ pub struct StartPipelineInput {
     pub pages: Option<Vec<PageId>>,
     pub text_node_ids: Option<Vec<NodeId>>,
     pub target_language: Option<String>,
+    pub paged: Option<bool>,
     pub system_prompt: Option<String>,
     pub default_font: Option<String>,
     pub reading_order: Option<ReadingOrder>,
@@ -187,6 +188,7 @@ impl KoharuServer {
             steps: input.steps,
             options: PipelineRunOptions {
                 target_language: input.target_language,
+                paged: input.paged,
                 system_prompt: input.system_prompt,
                 default_font: input.default_font,
                 text_node_ids: input.text_node_ids,

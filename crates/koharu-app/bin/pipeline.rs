@@ -71,6 +71,10 @@ struct Cli {
     #[arg(long, default_value = "en")]
     target_lang: String,
 
+    /// When true, run the translator step once across all pages instead of per-page.
+    #[arg(long, default_value_t = false)]
+    paged: bool,
+
     /// Custom system prompt for the translator.
     #[arg(long)]
     system_prompt: Option<String>,
@@ -224,6 +228,7 @@ async fn run() -> Result<()> {
         steps,
         options: koharu_app::PipelineRunOptions {
             target_language: Some(cli.target_lang.clone()),
+            paged: Some(cli.paged),
             system_prompt: cli.system_prompt.clone(),
             default_font: cli.default_font.clone(),
             text_node_ids: None,

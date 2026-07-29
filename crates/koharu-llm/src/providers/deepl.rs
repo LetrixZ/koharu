@@ -103,6 +103,7 @@ impl AnyProvider for DeeplMtProvider {
         source: &'a str,
         target_language: Language,
         _model: &'a str,
+        _paged: bool,
         _custom_system_prompt: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + 'a>> {
         Box::pin(async move {

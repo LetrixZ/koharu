@@ -1,6 +1,11 @@
 //! LLM-driven translation. Collects `text` from every text node on the page,
 //! sends them through the loaded LLM as tagged blocks, writes the parsed
 //! translations back via `UpdateNode { TextDataPatch { translation } }`.
+//!
+//! When `paged=true`, the engine collects text from ALL pages, formats them
+//! with page-grouped headers and globally sequential tags, sends them in a
+//! single LLM call, and distributes the translations back to their respective
+//! pages.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -15,6 +20,9 @@ pub struct Model;
 #[async_trait]
 impl Engine for Model {
     async fn run(&self, ctx: EngineCtx<'_>) -> Result<Vec<Op>> {
+        // In paged mode the pipeline driver calls `run_paged` directly
+        // instead of this per-page method, so this path only runs for
+        // non-paged translation.
         let targets = collect_translation_targets(&ctx);
         if targets.is_empty() {
             return Ok(Vec::new());
@@ -26,28 +34,95 @@ impl Engine for Model {
             .translate_texts(
                 &sources,
                 ctx.options.target_language.as_deref(),
+                ctx.options.paged,
                 ctx.options.system_prompt.as_deref(),
             )
             .await?;
 
-        let mut ops = Vec::with_capacity(targets.len());
-        for ((node_id, _), translation) in targets.into_iter().zip(translations) {
-            ops.push(Op::UpdateNode {
-                page: ctx.page,
-                id: node_id,
-                patch: NodePatch {
-                    data: Some(NodeDataPatch::Text(TextDataPatch {
-                        translation: Some(Some(translation)),
-                        ..Default::default()
-                    })),
-                    transform: None,
-                    visible: None,
-                },
-                prev: NodePatch::default(),
-            });
-        }
-        Ok(ops)
+        build_translation_ops(ctx.page, targets, translations)
     }
+}
+
+/// Run paged translation across multiple pages. Collects text from all pages,
+/// groups them by page with globally sequential tags, sends a single LLM
+/// request, and returns ops for all pages.
+pub async fn run_paged(
+    scene: &Scene,
+    pages: &[PageId],
+    options: &crate::pipeline::PipelineRunOptions,
+    llm: &crate::llm::Model,
+) -> Result<Vec<Op>> {
+    // Collect (page_id, node_id, text) from all pages, grouped by page.
+    let mut page_blocks: Vec<(PageId, Vec<(NodeId, String)>)> = Vec::new();
+    for &page_id in pages {
+        let targets = collect_translation_targets_from(scene, page_id, None);
+        if targets.is_empty() {
+            continue;
+        }
+        page_blocks.push((page_id, targets));
+    }
+
+    if page_blocks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Format the body with page headers and globally sequential tags.
+    let mut body = String::new();
+    let mut mapping: Vec<(PageId, NodeId)> = Vec::new(); // global tag index -> (page, node)
+    for (page_num, (page_id, blocks)) in page_blocks.iter().enumerate() {
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(&format!("Page {}", page_num + 1));
+        for (node_id, text) in blocks {
+            body.push_str(&format!("\n[{}]{}", mapping.len() + 1, text));
+            mapping.push((*page_id, *node_id));
+        }
+    }
+
+    let expected_blocks = mapping.len();
+    let translations = llm
+        .translate_body(
+            &body,
+            expected_blocks,
+            options.target_language.as_deref(),
+            options.paged,
+            options.system_prompt.as_deref(),
+        )
+        .await?;
+
+    // Build ops: one UpdateNode per translated block.
+    let mut page_ops: Vec<(PageId, Vec<Op>)> = Vec::new();
+    for (i, translation) in translations.into_iter().enumerate() {
+        if i >= mapping.len() {
+            break;
+        }
+        let (page_id, node_id) = mapping[i];
+        let op = Op::UpdateNode {
+            page: page_id,
+            id: node_id,
+            patch: NodePatch {
+                data: Some(NodeDataPatch::Text(TextDataPatch {
+                    translation: Some(Some(translation)),
+                    ..Default::default()
+                })),
+                transform: None,
+                visible: None,
+            },
+            prev: NodePatch::default(),
+        };
+
+        // Group ops by page so the caller can apply them per-page.
+        let pos = page_ops.iter().position(|(id, _)| *id == page_id);
+        if let Some(idx) = pos {
+            page_ops[idx].1.push(op);
+        } else {
+            page_ops.push((page_id, vec![op]));
+        }
+    }
+
+    // Flatten all ops into a single Vec.
+    Ok(page_ops.into_iter().flat_map(|(_, ops)| ops).collect())
 }
 
 fn collect_translation_targets(ctx: &EngineCtx<'_>) -> Vec<(NodeId, String)> {
@@ -76,6 +151,30 @@ fn should_translate(id: NodeId, text_data: &TextData, allowed_ids: Option<&[Node
         .text
         .as_ref()
         .is_some_and(|source| !source.trim().is_empty())
+}
+
+fn build_translation_ops(
+    page: PageId,
+    targets: Vec<(NodeId, String)>,
+    translations: Vec<String>,
+) -> Result<Vec<Op>> {
+    let mut ops = Vec::with_capacity(targets.len());
+    for ((node_id, _), translation) in targets.into_iter().zip(translations) {
+        ops.push(Op::UpdateNode {
+            page,
+            id: node_id,
+            patch: NodePatch {
+                data: Some(NodeDataPatch::Text(TextDataPatch {
+                    translation: Some(Some(translation)),
+                    ..Default::default()
+                })),
+                transform: None,
+                visible: None,
+            },
+            prev: NodePatch::default(),
+        });
+    }
+    Ok(ops)
 }
 
 inventory::submit! {

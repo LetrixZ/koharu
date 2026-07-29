@@ -205,6 +205,7 @@ impl Model {
         &self,
         sources: &[String],
         target_language: Option<&str>,
+        paged: Option<bool>,
         custom_system_prompt: Option<&str>,
     ) -> Result<Vec<String>> {
         if sources.is_empty() {
@@ -213,20 +214,49 @@ impl Model {
         let target_language = target_language
             .and_then(Language::parse)
             .unwrap_or(Language::English);
+        let paged = paged.unwrap_or(false);
         let body = format_sources(sources);
+
+        self.translate_body(&body, sources.len(), Some(target_language.tag()), Some(paged), custom_system_prompt)
+            .await
+    }
+
+    /// Translate a pre-formatted body string. Unlike [`translate_texts`],
+    /// this does NOT wrap sources in `[N]` tags — the body is passed as-is
+    /// to the LLM. The response is parsed using `parse_tagged_blocks` to
+    /// extract `expected_blocks` translations.
+    ///
+    /// Used by paged mode where page grouping and global sequential tags are
+    /// embedded directly in the body by the caller.
+    pub async fn translate_body(
+        &self,
+        body: &str,
+        expected_blocks: usize,
+        target_language: Option<&str>,
+        paged: Option<bool>,
+        custom_system_prompt: Option<&str>,
+    ) -> Result<Vec<String>> {
+        if expected_blocks == 0 {
+            return Ok(Vec::new());
+        }
+        let target_language = target_language
+            .and_then(Language::parse)
+            .unwrap_or(Language::English);
+        let paged = paged.unwrap_or(false);
 
         let mut guard = self.state.write().await;
         let translation = match &mut *guard {
             State::ReadyLocal(llm) => {
                 let opts = llm.id().default_generate_options();
-                llm.generate(&body, &opts, target_language, custom_system_prompt)
+                llm.generate(body, &opts, target_language, paged, custom_system_prompt)
             }
             State::ReadyProvider { target, provider } => {
                 provider
                     .translate(
-                        &body,
+                        body,
                         target_language,
                         &target.model_id,
+                        paged,
                         custom_system_prompt,
                     )
                     .await
@@ -237,9 +267,16 @@ impl Model {
         }?;
 
         let translation = strip_thinking_block(&translation);
-        let out = match parse_tagged_blocks(translation, sources.len())? {
+        // In paged mode, strip page header lines from the response before
+        // parsing so they don't bleed into the extracted block content.
+        let cleaned = if paged {
+            strip_page_headers(translation)
+        } else {
+            translation.to_string()
+        };
+        let out = match parse_tagged_blocks(&cleaned, expected_blocks)? {
             Some(blocks) => blocks,
-            None => split_legacy_lines(translation, sources.len()),
+            None => split_legacy_lines(&cleaned, expected_blocks),
         };
         Ok(out
             .into_iter()
@@ -535,4 +572,18 @@ fn strip_wrapping_quotes(text: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+/// Strip lines that are exactly `Page N` (page headers used in paged mode)
+/// from a translation response so they don't bleed into parsed block content.
+fn strip_page_headers(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !(trimmed.starts_with("Page ")
+                && trimmed.len() > 5
+                && trimmed[5..].chars().all(|c| c.is_ascii_digit() || c.is_whitespace()))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

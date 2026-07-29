@@ -113,6 +113,7 @@ impl Llm {
         prompt: &str,
         opts: &GenerateOptions,
         target_language: Language,
+        paged: bool,
         system_prompt: Option<&str>,
     ) -> Result<String> {
         if opts.max_tokens == 0 {
@@ -122,6 +123,7 @@ impl Llm {
         let prompt = self.prompt_renderer.format_chat_prompt(
             prompt.to_string(),
             target_language,
+            paged,
             system_prompt,
         )?;
         tracing::debug!("Generating with prompt:\n{}", prompt);

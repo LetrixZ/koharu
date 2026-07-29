@@ -49,10 +49,17 @@ pub struct PromptRenderer {
 
 pub const BLOCK_TAG_INSTRUCTIONS: &str = "The input uses numbered tags like [1], [2], etc. to mark each text block. Translate only the text after each tag. Keep every tag exactly unchanged, including numbers and order. Output the same tags followed by the translated text. Do not merge, split, or reorder blocks.";
 
-pub fn system_prompt(target_language: Language) -> String {
+pub const PAGED_BLOCK_TAG_INSTRUCTIONS: &str = "The input is organized by page with page headers like 'Page 1', 'Page 2', etc. Each text block is marked with a globally sequential numbered tag like [1], [2], [3] across ALL pages.\n\nTranslate only the text after each tag. The page headers are just for orientation — translate the tagged blocks, not the headers.\n\nKeep every tag and page header exactly unchanged, including numbers and order. Output the same page headers and tags followed by the translated text. Do not merge, split, reorder blocks, or omit any tag.\n\nExample input:\nPage 1\n[1]Hello\n[2]How are you?\nPage 2\n[3]Good morning\n\nExample output:\nPage 1\n[1]Hola\n[2]¿Cómo estás?\nPage 2\n[3]Buenos días";
+
+pub fn system_prompt(target_language: Language, paged: bool) -> String {
     format!(
-        "You are a professional manga translator. Translate manga dialogue into natural {} that fits inside speech bubbles. Preserve character voice, emotional tone, relationship nuance, emphasis, and sound effects naturally. Keep the wording concise. Do not add notes, explanations, or romanization. {BLOCK_TAG_INSTRUCTIONS}",
-        target_language
+        "You are a professional manga translator. Translate manga dialogue into natural {} that fits inside speech bubbles. Preserve character voice, emotional tone, relationship nuance, emphasis, and sound effects naturally. Keep the wording concise. Do not add notes, explanations, or romanization. {}",
+        target_language,
+        if paged {
+            PAGED_BLOCK_TAG_INSTRUCTIONS
+        } else {
+            BLOCK_TAG_INSTRUCTIONS
+        }
     )
 }
 
@@ -71,6 +78,7 @@ impl PromptRenderer {
         &self,
         text: impl Into<String>,
         target_language: Language,
+        paged: bool,
         custom_prompt: Option<&str>,
     ) -> Vec<ChatMessage> {
         let text = text.into();
@@ -78,7 +86,7 @@ impl PromptRenderer {
             Some(p) if !p.trim().is_empty() => {
                 format!("{p} {BLOCK_TAG_INSTRUCTIONS}")
             }
-            _ => system_prompt(target_language),
+            _ => system_prompt(target_language, paged),
         };
 
         match self.model_id {
@@ -101,9 +109,10 @@ impl PromptRenderer {
         &self,
         prompt: String,
         target_language: Language,
+        paged: bool,
         custom_prompt: Option<&str>,
     ) -> anyhow::Result<String> {
-        let messages = self.messages(prompt, target_language, custom_prompt);
+        let messages = self.messages(prompt, target_language, paged, custom_prompt);
         let tmpl = self.env.template_from_str(&self.template)?;
 
         let prompt = tmpl
@@ -131,7 +140,7 @@ mod tests {
 
     #[test]
     fn system_prompt_mentions_target_language_and_block_rules() {
-        let prompt = system_prompt(Language::Korean);
+        let prompt = system_prompt(Language::Korean, false);
         assert!(prompt.contains("natural Korean"));
         assert!(prompt.contains("[1], [2]"));
         assert!(prompt.contains("Do not merge"));
@@ -146,10 +155,10 @@ mod tests {
             "<|end_of_text|>".to_string(),
         );
         let formatted =
-            renderer.format_chat_prompt("hello".to_string(), Language::English, None)?;
+            renderer.format_chat_prompt("hello".to_string(), Language::English, false, None)?;
         let expected = format!(
             "<|begin_of_text|><|start_header_id|>Metadata<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>Japanese<|end_header_id|>\n\nhello<|eot_id|><|start_header_id|>English<|end_header_id|>\n\n",
-            system_prompt(Language::English)
+            system_prompt(Language::English, false)
         );
         assert_eq!(formatted, expected);
 
@@ -164,10 +173,10 @@ mod tests {
             "<s>".to_string(),
             "</s>".to_string(),
         );
-        let formatted = renderer.format_chat_prompt("hello".to_string(), Language::Korean, None)?;
+        let formatted = renderer.format_chat_prompt("hello".to_string(), Language::Korean, false, None)?;
         let expected = format!(
             "<|im_start|>system {}<|im_end|> <|im_start|>user hello<|im_end|> <|im_start|>assistant ",
-            system_prompt(Language::Korean)
+            system_prompt(Language::Korean, false)
         );
         assert_eq!(formatted, expected);
 
@@ -182,10 +191,10 @@ mod tests {
             "<s>".to_string(),
             "</s>".to_string(),
         );
-        let formatted = renderer.format_chat_prompt("hello".to_string(), Language::Korean, None)?;
+        let formatted = renderer.format_chat_prompt("hello".to_string(), Language::Korean, false, None)?;
         assert_eq!(
             formatted,
-            format!("{}\n\nhello", system_prompt(Language::Korean))
+            format!("{}\n\nhello", system_prompt(Language::Korean, false))
         );
 
         Ok(())
@@ -200,7 +209,7 @@ mod tests {
             "</s>".to_string(),
         );
         let formatted =
-            renderer.format_chat_prompt("hello".to_string(), Language::English, None)?;
+            renderer.format_chat_prompt("hello".to_string(), Language::English, false, None)?;
         assert_eq!(formatted, "<think>\n\n</think>\n\n");
 
         Ok(())
