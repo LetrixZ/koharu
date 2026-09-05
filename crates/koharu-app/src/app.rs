@@ -138,6 +138,32 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
             application.manage(koharu_desktop::Desktop::new()?);
             application.manage(AgentState::new(handle.clone())?);
 
+            let server = crate::api::ApiServer::new(handle.clone());
+            match tauri::async_runtime::block_on(server.apply()) {
+                Ok(Some(api)) => {
+                    let address = format!("http://{}:{}", api.host, api.port);
+                    match api.token {
+                        Some(token) => tracing::info!(
+                            host = %api.host,
+                            port = api.port,
+                            "Koharu REST API listening at {address} (token {token})"
+                        ),
+                        None => tracing::info!(
+                            host = %api.host,
+                            port = api.port,
+                            "Koharu REST API listening at {address} (no auth key configured)"
+                        ),
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!("the Koharu REST API is disabled (Settings → API)");
+                }
+                Err(error) => {
+                    tracing::error!(%error, "failed to start the Koharu REST API");
+                }
+            }
+            application.manage(server);
+
             let window_config = application
                 .config()
                 .app

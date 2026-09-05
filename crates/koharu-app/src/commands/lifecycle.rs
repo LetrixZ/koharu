@@ -67,6 +67,10 @@ impl Initialization {
         }
         Ok(())
     }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        *self.ready.subscribe().borrow()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -173,14 +177,57 @@ pub(crate) async fn subscribe(
             .state::<Processing>()
             .jobs
             .lock()
-            .values()
+            .iter()
             .cloned()
             .collect(),
         canvas,
     })
 }
 
-async fn replace_project(handle: &AppHandle<CefRuntime>, opened: Project) -> Result<()> {
+pub(crate) async fn add_pages(
+    project: &mut Project,
+    desktop: &Desktop,
+    canvas_channel: &CanvasChannel,
+    pages: Vec<import::Page>,
+) -> Result<()> {
+    let source = AssetRole::new("source")?;
+    let patch = project.snapshot().patch(|edit| {
+        for imported in pages {
+            let page = edit.add_page(
+                PageDraft::new(
+                    imported.name,
+                    f64::from(imported.width),
+                    f64::from(imported.height),
+                ),
+                At::End,
+            )?;
+            edit.set_asset(
+                page,
+                &source,
+                AssetInput::new(
+                    imported.bytes,
+                    imported.format.to_mime_type(),
+                    AssetMetadata {
+                        width: Some(imported.width),
+                        height: Some(imported.height),
+                        attributes: Default::default(),
+                    },
+                ),
+            )?;
+        }
+        Ok(())
+    })?;
+    let commit = project.session.commit(patch).await?;
+    project.record(vec![commit.revision]);
+    project.reconcile_page();
+    let page = project.active_page();
+    desktop.synchronize(&commit.snapshot, page, &commit).await?;
+    let canvas = desktop.canvas_state();
+    canvas_channel.channel.publish(canvas);
+    Ok(())
+}
+
+pub(crate) async fn replace_project(handle: &AppHandle<CefRuntime>, opened: Project) -> Result<()> {
     let snapshot = opened.snapshot();
     let page = opened.active_page();
     let info = opened.info();
@@ -334,7 +381,7 @@ pub(crate) async fn delete_project(
     Ok(())
 }
 
-async fn close_current_project(handle: &AppHandle<CefRuntime>) -> Result<()> {
+pub(crate) async fn close_current_project(handle: &AppHandle<CefRuntime>) -> Result<()> {
     handle.state::<AgentState>().reset().await;
     let processing = handle.state::<Processing>();
     for stop in processing.stops.lock().values() {
@@ -419,45 +466,9 @@ pub(crate) async fn import_pages(
         .context("page import worker stopped unexpectedly")??;
     let page_count = pages.len();
 
-    let (commit, page) = {
-        let mut project = project.project.lock().await;
-        let project = project.as_mut().context("no project is open")?;
-        let source = AssetRole::new("source")?;
-        let patch = project.snapshot().patch(|edit| {
-            for imported in pages {
-                let page = edit.add_page(
-                    PageDraft::new(
-                        imported.name,
-                        f64::from(imported.width),
-                        f64::from(imported.height),
-                    ),
-                    At::End,
-                )?;
-                edit.set_asset(
-                    page,
-                    &source,
-                    AssetInput::new(
-                        imported.bytes,
-                        imported.format.to_mime_type(),
-                        AssetMetadata {
-                            width: Some(imported.width),
-                            height: Some(imported.height),
-                            attributes: Default::default(),
-                        },
-                    ),
-                )?;
-            }
-            Ok(())
-        })?;
-        let commit = project.session.commit(patch).await?;
-        project.record(vec![commit.revision]);
-        project.reconcile_page();
-        let page = project.active_page();
-        (commit, page)
-    };
-    desktop.synchronize(&commit.snapshot, page, &commit).await?;
-    let canvas = desktop.canvas_state();
-    canvas_channel.channel.publish(canvas);
+    let mut project = project.project.lock().await;
+    let project = project.as_mut().context("no project is open")?;
+    add_pages(project, &desktop, &canvas_channel, pages).await?;
     tracing::info!(target: "koharu_metrics", metric = "page_imported", page_count);
     Ok(())
 }

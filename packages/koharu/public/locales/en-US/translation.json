@@ -429,7 +429,8 @@
       "providers": "Providers",
       "shortcuts": "Shortcuts",
       "translation": "Translation",
-      "typesetting": "Typesetting"
+      "typesetting": "Typesetting",
+      "api": "API"
     },
     "title": "Settings",
     "translation": {
@@ -461,6 +462,23 @@
       "loadingFonts": "Loading fonts…",
       "removeFamily": "Remove {{family}}",
       "title": "Typesetting"
+    },
+    "api": {
+      "title": "API",
+      "description": "Expose Koharu's automation over a local HTTP API.",
+      "section": "Configuration",
+      "enabled": "Enable API server",
+      "enabledDescription": "Accept requests from local tools.",
+      "host": "Host",
+      "hostDescription": "Address to listen on. Use 0.0.0.0 to accept connections from the local network.",
+      "port": "Port",
+      "portHint": "Between 1 and 65535.",
+      "key": "API key",
+      "keyDescription": "Sent on every request as a bearer token; leave empty for no authentication.",
+      "listening": "Listening on {{url}}",
+      "stopped": "Server is stopped.",
+      "apply": "Apply changes",
+      "saved": "All changes applied"
     }
   },
   "start": {

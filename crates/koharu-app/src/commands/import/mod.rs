@@ -1,9 +1,4 @@
-use std::{
-    fs,
-    io::Cursor,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fs, io::Cursor, path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result, bail};
 use image::{ImageFormat, ImageReader};
@@ -38,30 +33,21 @@ pub(super) struct EncodedPage {
     pub(super) bytes: Vec<u8>,
 }
 
-pub(super) struct Page {
-    pub(super) name: String,
-    pub(super) bytes: Arc<[u8]>,
-    pub(super) format: ImageFormat,
-    pub(super) width: u32,
-    pub(super) height: u32,
+pub(crate) struct Page {
+    pub(crate) name: String,
+    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) format: ImageFormat,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
-fn decode(path: &Path, source: EncodedPage) -> Result<Page> {
+fn decode(label: impl std::fmt::Display, source: EncodedPage) -> Result<Page> {
     let EncodedPage { name, bytes } = source;
-    let format = image::guess_format(&bytes).with_context(|| {
-        format!(
-            "failed to identify imported image {} ({name})",
-            path.display()
-        )
-    })?;
+    let format = image::guess_format(&bytes)
+        .with_context(|| format!("failed to identify imported image {label} ({name})"))?;
     let (width, height) = ImageReader::with_format(Cursor::new(bytes.as_slice()), format)
         .into_dimensions()
-        .with_context(|| {
-            format!(
-                "failed to read dimensions of imported image {} ({name})",
-                path.display()
-            )
-        })?;
+        .with_context(|| format!("failed to read dimensions of imported image {label} ({name})"))?;
     Ok(Page {
         name,
         bytes: Arc::<[u8]>::from(bytes),
@@ -71,7 +57,12 @@ fn decode(path: &Path, source: EncodedPage) -> Result<Page> {
     })
 }
 
-pub(super) fn import(mut paths: Vec<PathBuf>) -> Result<Vec<Page>> {
+/// Decode one raw image into an importable page without a backing file.
+pub(crate) fn decode_page(name: String, bytes: Vec<u8>) -> Result<Page> {
+    decode(name.clone(), EncodedPage { name, bytes })
+}
+
+pub(crate) fn import(mut paths: Vec<PathBuf>) -> Result<Vec<Page>> {
     alphanumeric_sort::sort_slice_by_os_str_key(&mut paths, |path| {
         path.file_name().unwrap_or_else(|| path.as_os_str())
     });
@@ -98,7 +89,7 @@ pub(super) fn import(mut paths: Vec<PathBuf>) -> Result<Vec<Page>> {
             };
             encoded
                 .into_iter()
-                .map(|source| decode(&path, source))
+                .map(|source| decode(path.display(), source))
                 .collect()
         })
         .collect::<Result<Vec<_>>>()?;

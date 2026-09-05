@@ -2,13 +2,15 @@
 
 import { commands } from '@koharu/bridge/protocol'
 import type {
+  ApiSettings,
+  CredentialInput,
   PipelineConfig,
   Preferences,
   ProviderPreferences,
   TypesettingConfig,
 } from '@koharu/bridge/protocol'
 
-import { receiveError, receivePreferences, receiveTranslationModels } from './store'
+import { receiveError, receiveApi, receivePreferences, receiveTranslationModels } from './store'
 
 type Command<Args extends unknown[], Result> = (...args: Args) => Promise<Result>
 
@@ -71,6 +73,23 @@ export function refreshTranslationModels(force = false): Promise<void> {
     })
   translationModelsRequest = request
   return request
+}
+
+export async function refreshApi(): Promise<void> {
+  const settings = await call(commands.getApiSettings)
+  receiveApi(settings)
+}
+
+export function applyApi(
+  enabled: boolean,
+  port: number,
+  host: string,
+  token: CredentialInput,
+): Promise<ApiSettings> {
+  return call(commands.applyApiSettings, enabled, port, host, token).then((settings) => {
+    receiveApi(settings)
+    return settings
+  })
 }
 
 function report(error: unknown): Error {

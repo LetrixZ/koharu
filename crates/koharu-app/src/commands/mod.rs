@@ -95,6 +95,8 @@ pub fn bindings() -> tauri_specta::Builder<tauri_runtime_cef::CefRuntime> {
             preferences::save_preferences,
             preferences::get_preferences,
             preferences::get_translation_models,
+            preferences::get_api_settings,
+            preferences::apply_api_settings,
             canvas::get_canvas_manifest,
             canvas::get_canvas_resource,
             canvas::prepare_canvas_page,

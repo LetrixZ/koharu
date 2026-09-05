@@ -10,6 +10,7 @@ use koharu_renderer::{Frame, Renderer};
 use koharu_scene::{AssetRole, EntityId, Snapshot};
 use serde::Deserialize;
 use specta::Type;
+use std::io::{Cursor, Write as _};
 use std::sync::Arc;
 use tauri::{State, WebviewWindow, ipc::IpcResponse};
 use tauri_runtime_cef::CefRuntime;
@@ -79,29 +80,7 @@ pub(crate) async fn export_pages(
         .enumerate()
         .map(|(index, page_id)| {
             let page = snapshot.page(page_id)?.page()?;
-            let name = page
-                .label
-                .trim()
-                .trim_end_matches(|character: char| character == '.' || character.is_whitespace());
-            let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
-            let name = name
-                .chars()
-                .map(|character| {
-                    if matches!(
-                        character,
-                        '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
-                    ) {
-                        '_'
-                    } else {
-                        character
-                    }
-                })
-                .collect::<String>();
-            let stem = format!(
-                "{:04}_{}",
-                index + 1,
-                if name.is_empty() { "page" } else { &name }
-            );
+            let stem = export_stem(&page.label, index);
             Ok::<_, anyhow::Error>((page_id, stem))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -194,6 +173,93 @@ pub(crate) async fn get_thumbnail(
     .await
     .context("thumbnail worker stopped unexpectedly")??;
     Ok(ThumbnailBytes(bytes))
+}
+
+pub(crate) async fn export_pages_zip(
+    desktop: &Desktop,
+    snapshot: &Snapshot,
+    pages: Vec<EntityId>,
+) -> Result<Vec<u8>> {
+    let renderer = desktop.renderer();
+    let rasterizer = desktop.rasterizer().await?;
+    let jobs = pages
+        .into_iter()
+        .enumerate()
+        .map(|(index, page_id)| {
+            let page = snapshot.page(page_id)?.page()?;
+            Ok::<_, anyhow::Error>((page_id, export_stem(&page.label, index)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let pages = stream::iter(jobs)
+        .map(|(page_id, stem)| {
+            let renderer = renderer.clone();
+            let rasterizer = Arc::clone(&rasterizer);
+            let snapshot = snapshot.clone();
+            async move {
+                let frame = renderer.render(&snapshot, page_id).await?;
+                let image = rasterize(Arc::clone(&rasterizer), &frame, RasterOptions::default())
+                    .await?
+                    .image;
+                let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+                    let mut encoded = Cursor::new(Vec::new());
+                    PngEncoder::new_with_quality(
+                        &mut encoded,
+                        CompressionType::Best,
+                        FilterType::Adaptive,
+                    )
+                    .write_image(
+                        image.as_raw(),
+                        image.width(),
+                        image.height(),
+                        ExtendedColorType::Rgba8,
+                    )?;
+                    Ok::<_, anyhow::Error>(encoded.into_inner())
+                })
+                .await
+                .context("PNG export worker stopped unexpectedly")??;
+                Ok::<_, anyhow::Error>((stem, bytes))
+            }
+        })
+        .buffer_unordered(4)
+        .try_collect::<Vec<_>>()
+        .await?;
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (stem, bytes) in pages {
+        archive.start_file(
+            format!("{stem}.png"),
+            zip::write::SimpleFileOptions::default(),
+        )?;
+        archive.write_all(&bytes)?;
+    }
+    let archive = archive
+        .finish()
+        .context("failed to finalize the export archive")?;
+    Ok(archive.into_inner())
+}
+
+fn export_stem(label: &str, index: usize) -> String {
+    let name = label
+        .trim()
+        .trim_end_matches(|character: char| character == '.' || character.is_whitespace());
+    let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let name = name
+        .chars()
+        .map(|character| {
+            if matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            ) {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    format!(
+        "{:04}_{}",
+        index + 1,
+        if name.is_empty() { "page" } else { &name }
+    )
 }
 
 pub(crate) async fn rendered_preview(

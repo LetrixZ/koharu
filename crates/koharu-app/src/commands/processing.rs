@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    sync::Arc,
+};
 
 use anyhow::{Context as _, Result};
 use koharu_pipeline::{Committer, Progress, RunStatus, StageOutput, StopToken};
@@ -36,6 +40,14 @@ impl fmt::Display for JobId {
     }
 }
 
+impl std::str::FromStr for JobId {
+    type Err = <Uuid as std::str::FromStr>::Err;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        value.parse().map(Self)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct Job {
     pub id: JobId,
@@ -59,10 +71,15 @@ pub enum JobState {
     Stopped,
 }
 
+/// How many completed jobs are retained for the API's `GET /v1/jobs/{id}`.
+/// The desktop only needs running jobs (terminal states arrive as events);
+/// finished jobs are kept so external tools can poll to a terminal state.
+const MAX_JOBS: usize = 16;
+
 #[derive(Default)]
 pub(crate) struct Processing {
     pub(crate) stops: Mutex<HashMap<JobId, StopToken>>,
-    pub(crate) jobs: Mutex<HashMap<JobId, Job>>,
+    pub(crate) jobs: Mutex<VecDeque<Job>>,
     pub(crate) inpainting_mask: Mutex<Option<koharu_pipeline::InpaintingMask>>,
 }
 
@@ -73,16 +90,24 @@ pub(crate) struct JobChannel {
 
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn process(
     handle: AppHandle<CefRuntime>,
     scope: koharu_pipeline::Scope,
     operation: koharu_pipeline::Operation,
-    project: State<'_, CurrentProject>,
-    processing: State<'_, Processing>,
-    job_channel: State<'_, JobChannel>,
 ) -> std::result::Result<JobId, Error> {
-    let snapshot = project
+    Ok(start_process(&handle, scope, operation).await?)
+}
+
+#[tracing::instrument(skip_all)]
+pub(crate) async fn start_process(
+    handle: &AppHandle<CefRuntime>,
+    scope: koharu_pipeline::Scope,
+    operation: koharu_pipeline::Operation,
+) -> Result<JobId> {
+    use anyhow::{Context as _, bail};
+
+    let snapshot = handle
+        .state::<CurrentProject>()
         .project
         .lock()
         .await
@@ -92,9 +117,10 @@ pub(crate) async fn process(
     let id = JobId::new();
     let stop = StopToken::default();
     {
+        let processing = handle.state::<Processing>();
         let mut stops = processing.stops.lock();
         if !stops.is_empty() {
-            return Err(anyhow::anyhow!("another process is already running").into());
+            bail!("another process is already running");
         }
         stops.insert(id, stop.clone());
     }
@@ -108,12 +134,21 @@ pub(crate) async fn process(
         model: None,
         error: None,
     };
-    processing.jobs.lock().insert(id, job.clone());
-    job_channel.channel.publish(job);
+    {
+        let processing = handle.state::<Processing>();
+        let mut jobs = processing.jobs.lock();
+        // Older finished jobs roll off once the retained history is full. The
+        // running job is the most recent entry, so it is never evicted.
+        while jobs.len() >= MAX_JOBS {
+            jobs.pop_front();
+        }
+        jobs.push_back(job.clone());
+    }
+    handle.state::<JobChannel>().channel.publish(job);
 
     let pipeline = handle.state::<koharu_pipeline::Pipeline>().inner().clone();
     let task_handle = handle.clone();
-    let inpainting_mask = processing.inpainting_mask.lock().take();
+    let inpainting_mask = handle.state::<Processing>().inpainting_mask.lock().take();
     drop(tokio::spawn(async move {
         let progress = Arc::new(Mutex::new((0_usize, 0_usize)));
         let progress_handle = task_handle.clone();
@@ -190,7 +225,7 @@ pub(crate) async fn process(
                 let job = {
                     let processing = progress_handle.state::<Processing>();
                     let mut jobs = processing.jobs.lock();
-                    jobs.get_mut(&id).map(|job| {
+                    jobs.iter_mut().find(|job| job.id == id).map(|job| {
                         job.completed = completed;
                         job.total = total;
                         job.page = page;
@@ -259,8 +294,9 @@ pub(crate) async fn process(
             .state::<Processing>()
             .jobs
             .lock()
-            .remove(&id)
-            .map(|mut job| {
+            .iter_mut()
+            .find(|job| job.id == id)
+            .map(|job| {
                 job.state = if stopped {
                     JobState::Stopped
                 } else if error.is_some() {
@@ -269,7 +305,7 @@ pub(crate) async fn process(
                     JobState::Finished
                 };
                 job.error = error;
-                job
+                job.clone()
             });
         if let Some(job) = job {
             task_handle.state::<JobChannel>().channel.publish(job);

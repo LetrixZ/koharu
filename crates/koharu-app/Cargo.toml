@@ -13,6 +13,7 @@ license.workspace = true
 [dependencies]
 alphanumeric-sort = { workspace = true }
 anyhow = { workspace = true }
+axum = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 dirs = { workspace = true }
@@ -21,6 +22,7 @@ hayro = { workspace = true }
 image = { workspace = true }
 koharu-agent = { workspace = true }
 koharu-desktop = { workspace = true }
+koharu-config = { workspace = true }
 koharu-ml = { workspace = true }
 koharu-metrics = { workspace = true }
 koharu-pipeline = { workspace = true }

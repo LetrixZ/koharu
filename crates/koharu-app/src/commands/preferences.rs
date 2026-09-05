@@ -7,6 +7,8 @@ use koharu_secrets::ExposeSecret as _;
 use koharu_translator::{Language, Model, Provider, ProviderConfig, ProvidersConfig};
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::{AppHandle, Manager as _};
+use tauri_runtime_cef::CefRuntime;
 
 use super::Error;
 
@@ -211,4 +213,86 @@ pub(crate) async fn get_preferences() -> std::result::Result<Preferences, Error>
 #[specta::specta]
 pub(crate) async fn get_translation_models() -> std::result::Result<Vec<Model>, Error> {
     Ok(koharu_translator::Translator::models().await?)
+}
+
+#[derive(Clone, Debug, Serialize, Type)]
+pub struct ApiSettings {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    /// The port the server is currently listening on, when enabled.
+    pub listening: Option<u16>,
+    pub token: CredentialInput,
+}
+
+#[tracing::instrument(
+    target = "koharu_metrics",
+    name = "api_settings_loaded",
+    skip_all,
+    fields(setting = "api")
+)]
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn get_api_settings(
+    handle: AppHandle<CefRuntime>,
+) -> std::result::Result<ApiSettings, Error> {
+    let config = crate::api::ApiConfig::load()?;
+    let config = config.read()?;
+    Ok(ApiSettings {
+        enabled: config.enabled,
+        host: config.host.clone(),
+        port: config.port,
+        listening: handle.state::<crate::api::ApiServer>().listening(),
+        token: CredentialInput::load(crate::api::API_TOKEN_KEY)?,
+    })
+}
+
+#[tracing::instrument(
+    target = "koharu_metrics",
+    name = "api_settings_applied",
+    skip_all,
+    fields(setting = "api")
+)]
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn apply_api_settings(
+    enabled: bool,
+    port: u16,
+    host: String,
+    token: CredentialInput,
+    handle: AppHandle<CefRuntime>,
+) -> std::result::Result<ApiSettings, Error> {
+    if port == 0 {
+        return Err(anyhow::anyhow!("port must be between 1 and 65535").into());
+    }
+    if host.trim().is_empty() {
+        return Err(anyhow::anyhow!("hostname cannot be empty").into());
+    }
+    let host = host.trim().to_owned();
+    {
+        let config = crate::api::ApiConfig::load()?;
+        let mut config = config.write()?;
+        config.enabled = enabled;
+        config.host = host.clone();
+        config.port = port;
+        config.save()?;
+    }
+    token.save(crate::api::API_TOKEN_KEY)?;
+    let listening = handle
+        .state::<crate::api::ApiServer>()
+        .apply()
+        .await?
+        .map(|info| info.port);
+    tracing::info!(
+        target: "koharu_metrics",
+        metric = "preference_changed",
+        setting = "api",
+    );
+    Ok(ApiSettings {
+        enabled,
+        host,
+        port,
+        listening,
+        token: CredentialInput::load(crate::api::API_TOKEN_KEY)?,
+    })
 }

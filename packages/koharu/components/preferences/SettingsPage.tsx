@@ -9,6 +9,7 @@ import {
   Monitor,
   Moon,
   Palette,
+  PlugZap,
   Sun,
   Type,
 } from 'lucide-react'
@@ -16,6 +17,7 @@ import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ApiPreferences } from '@/components/preferences/ApiPreferences'
 import { PipelinePreferences } from '@/components/preferences/PipelinePreferences'
 import {
   PreferencePage,
@@ -47,6 +49,7 @@ import {
 
 const tabs = [
   ['appearance', Palette],
+  ['api', PlugZap],
   ['pipeline', Cpu],
   ['providers', KeyRound],
   ['translation', Languages],
@@ -198,6 +201,7 @@ export function SettingsPage() {
         <ScrollArea className='min-h-0 flex-1'>
           <div className='mx-auto w-full max-w-4xl px-10 py-10'>
             {tab === 'appearance' && <AppearancePreferences />}
+            {tab === 'api' && <ApiPreferences />}
             {tab === 'pipeline' &&
               (pipeline ? (
                 <PipelinePreferences value={pipeline} onChange={setPipeline} />

@@ -1,5 +1,6 @@
 //! Koharu's Tauri-managed application state, commands, and lifecycle.
 
+mod api;
 mod app;
 mod commands;
 

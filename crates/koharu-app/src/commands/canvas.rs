@@ -16,7 +16,7 @@ use tauri_runtime_cef::CefRuntime;
 
 use super::{
     ChannelExt as _, Error, processing,
-    processing::{JobChannel, JobId, Processing},
+    processing::{JobId, Processing},
     project::{CurrentProject, Page, Project, RasterStrokeMode},
 };
 
@@ -398,9 +398,6 @@ pub(crate) async fn commit_inpaint(
             koharu_pipeline::Operation::Only {
                 stage: koharu_pipeline::Stage::Inpainting,
             },
-            handle.state::<CurrentProject>(),
-            handle.state::<Processing>(),
-            handle.state::<JobChannel>(),
         )
         .await?,
     ))

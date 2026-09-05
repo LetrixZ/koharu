@@ -1231,7 +1231,7 @@ impl Project {
     }
 }
 
-fn validate_project_name(name: &str) -> Result<String> {
+pub(crate) fn validate_project_name(name: &str) -> Result<String> {
     let name = name.trim();
     if name.is_empty() {
         bail!("project name cannot be empty");

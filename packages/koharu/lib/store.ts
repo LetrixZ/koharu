@@ -4,6 +4,7 @@ import { create } from 'zustand'
 
 import type {
   CanvasState,
+  CredentialInput,
   Download,
   EntityId,
   Job,
@@ -32,11 +33,20 @@ export type InspectorSection = 'copy' | 'type' | 'layers'
 export type ShortcutAction = CanvasTool | 'fit'
 export type Shortcuts = Record<ShortcutAction, string>
 export type PipelineScope = 'page' | 'selected-pages' | 'project'
+export interface Api {
+  enabled: boolean
+  host: string
+  port: number
+  listening: number | null
+  token: CredentialInput
+}
+
 export const pipelineStages: readonly Stage[] = ['detection', 'ocr', 'translation', 'inpainting']
 
 interface KoharuStore {
   initialized: boolean
   preferences: Preferences | null
+  api: Api | null
   translationModels: Model[]
   resources: ModelResources | null
   jobs: Record<string, Job>
@@ -85,6 +95,7 @@ export const defaultShortcuts: Shortcuts = {
 export const useKoharuStore = create<KoharuStore>()((set) => ({
   initialized: false,
   preferences: null,
+  api: null,
   translationModels: [],
   resources: null,
   jobs: {},
@@ -160,6 +171,10 @@ export function receiveDownload(download: Download): void {
 
 export function receivePreferences(preferences: Preferences): void {
   useKoharuStore.setState({ preferences })
+}
+
+export function receiveApi(api: Api): void {
+  useKoharuStore.setState({ api })
 }
 
 export function receiveTranslationModels(translationModels: Model[]): void {
