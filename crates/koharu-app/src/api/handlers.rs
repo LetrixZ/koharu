@@ -403,6 +403,19 @@ pub(super) async fn run_pipeline(
     }))
 }
 
+pub(super) async fn get_jobs(State(state): State<ApiState>) -> Result<Json<Vec<Job>>, ApiError> {
+    let jobs = state
+        .app
+        .state::<Processing>()
+        .jobs
+        .lock()
+        .iter()
+        .cloned()
+        .collect();
+
+    Ok(Json(jobs))
+}
+
 pub(super) async fn get_job(
     State(state): State<ApiState>,
     Path(job): Path<String>,

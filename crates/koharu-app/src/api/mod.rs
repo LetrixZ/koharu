@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Cef};
 
 use self::handlers::{
-    ApiError, create_project, delete_project, export_zip, get_job, get_project,
+    ApiError, create_project, delete_project, export_zip, get_job, get_jobs, get_project,
     get_translation_preferences, import_images, list_projects, run_pipeline,
     set_translation_preferences, status, stop_job, translation_languages, translation_models,
 };
@@ -227,6 +227,7 @@ fn router(state: ApiState) -> Router {
         )
         .route("/v1/projects/{name}/images", post(import_images))
         .route("/v1/projects/{name}/pipeline", post(run_pipeline))
+        .route("/v1/jobs", get(get_jobs))
         .route("/v1/jobs/{job}", get(get_job))
         .route("/v1/jobs/{job}/stop", post(stop_job))
         .route("/v1/translation/models", get(translation_models))

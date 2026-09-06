@@ -388,10 +388,7 @@ pub fn run(context: tauri::Context<CefRuntime>, background: bool) -> Result<()> 
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
-            ) {
+            if matches!(event, WindowEvent::Destroyed) {
                 let processing = window.state::<Processing>();
                 for stop in processing.stops.lock().values() {
                     stop.stop();
@@ -399,8 +396,6 @@ pub fn run(context: tauri::Context<CefRuntime>, background: bool) -> Result<()> 
                 processing.stops.lock().clear();
                 processing.jobs.lock().clear();
                 window.state::<AgentState>().cancel_all();
-            }
-            if matches!(event, WindowEvent::Destroyed) {
                 tracing::info!(
                     target: "koharu_metrics",
                     metric = "app_closed",
