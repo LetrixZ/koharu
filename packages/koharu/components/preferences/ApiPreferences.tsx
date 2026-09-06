@@ -68,68 +68,72 @@ export function ApiPreferences() {
 
   return (
     <PreferencePage title={t('settings.api.title')} description={t('settings.api.description')}>
-      <PreferenceSection title={t('settings.api.section')}>
-        <PreferenceRow
-          title={t('settings.api.enabled')}
-          description={t('settings.api.enabledDescription')}
-        >
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
-        </PreferenceRow>
-        <PreferenceRow
-          title={t('settings.api.host')}
-          description={t('settings.api.hostDescription')}
-        >
-          <Input
-            type='text'
-            autoComplete='off'
-            autoCapitalize='none'
-            spellCheck={false}
-            value={host}
-            disabled={!enabled}
-            placeholder='127.0.0.1'
-            className='ml-auto h-8 w-56 text-right font-mono text-[12px]'
-            onChange={(event) => setHost(event.currentTarget.value)}
-          />
-        </PreferenceRow>
-        <PreferenceRow title={t('settings.api.port')} description={t('settings.api.portHint')}>
-          <Input
-            type='number'
-            min={1}
-            max={65535}
-            value={port}
-            disabled={!enabled}
-            aria-invalid={!portValid}
-            className='ml-auto h-8 w-32 text-right text-[12px]'
-            onChange={(event) => setPort(event.currentTarget.value)}
-          />
-        </PreferenceRow>
-        <PreferenceRow title={t('settings.api.key')} description={t('settings.api.keyDescription')}>
-          <ApiKeyField credential={credential} configured={configured} onChange={setCredential} />
-        </PreferenceRow>
-      </PreferenceSection>
+      <div>
+        <PreferenceSection title={t('settings.api.section')}>
+          <PreferenceRow
+            title={t('settings.api.enabled')}
+            description={t('settings.api.enabledDescription')}
+          >
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+          </PreferenceRow>
+          <PreferenceRow
+            title={t('settings.api.host')}
+            description={t('settings.api.hostDescription')}
+          >
+            <Input
+              type='text'
+              autoComplete='off'
+              autoCapitalize='none'
+              spellCheck={false}
+              value={host}
+              disabled={!enabled}
+              placeholder='127.0.0.1'
+              className='ml-auto h-8 w-56 text-right font-mono text-[12px]'
+              onChange={(event) => setHost(event.currentTarget.value)}
+            />
+          </PreferenceRow>
+          <PreferenceRow title={t('settings.api.port')} description={t('settings.api.portHint')}>
+            <Input
+              type='number'
+              min={1}
+              max={65535}
+              value={port}
+              disabled={!enabled}
+              aria-invalid={!portValid}
+              className='ml-auto h-8 w-32 text-right text-[12px]'
+              onChange={(event) => setPort(event.currentTarget.value)}
+            />
+          </PreferenceRow>
+          <PreferenceRow
+            title={t('settings.api.key')}
+            description={t('settings.api.keyDescription')}
+          >
+            <ApiKeyField credential={credential} configured={configured} onChange={setCredential} />
+          </PreferenceRow>
+        </PreferenceSection>
 
-      {settings.enabled && (
-        <p className='mt-4 text-[11px] text-muted-foreground'>
+        <p className='mt-2.5 text-[11px] text-muted-foreground'>
           {settings.listening !== null
             ? t('settings.api.listening', {
                 url: `http://${settings.host}:${settings.listening}`,
               })
             : t('settings.api.stopped')}
         </p>
-      )}
 
-      <div className='mt-6 flex items-center gap-3'>
-        <Button
-          type='button'
-          variant='default'
-          disabled={!portValid || (!changed && !credentialChanged(credential)) || busy}
-          onClick={() => void handleApply()}
-        >
-          {t('settings.api.apply')}
-        </Button>
-        {!changed && !busy && (
-          <span className='text-[11px] text-muted-foreground'>{t('settings.api.saved')}</span>
-        )}
+        <div className='mt-6 flex items-center gap-3'>
+          <Button
+            type='button'
+            size='sm'
+            className='h-9 justify-center gap-1.5 text-[11px]'
+            disabled={!portValid || (!changed && !credentialChanged(credential)) || busy}
+            onClick={() => void handleApply()}
+          >
+            {t('settings.api.apply')}
+          </Button>
+          {!changed && !busy && (
+            <span className='text-[11px] text-muted-foreground'>{t('settings.api.saved')}</span>
+          )}
+        </div>
       </div>
     </PreferencePage>
   )
@@ -179,7 +183,9 @@ function ApiKeyField({
           type='button'
           variant='outline'
           size='icon'
-          aria-label={t('settings.providers.clearCredential', { provider: 'API' })}
+          aria-label={t('settings.providers.clearCredential', {
+            provider: 'API',
+          })}
           onClick={() => {
             setDraft('')
             onChange({ configured: false, value: null, clear: true })

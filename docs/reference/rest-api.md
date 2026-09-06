@@ -46,6 +46,23 @@ When a key is configured, send it on every request:
 Authorization: Bearer <token>
 ```
 
+## Run in the background
+
+Start Koharu with `--background` to run it without a window — the app stays
+alive as a background server, so the REST API keeps working with no visible
+interface:
+
+```console
+koharu --background
+```
+
+The menu bar icon is always present while the app runs. Clicking it opens the
+menu: **Show window** / **Hide window** toggles the main window (its label
+reflects the action), and **Quit Koharu** exits the app. Closing the window
+hides it to the tray instead of quitting. While the app has no visible window
+it runs in background mode — on macOS the Dock icon is hidden too and only the
+menu bar icon remains, until the window is restored.
+
 ## Workflow overview
 
 The complete automation flow maps to four calls. After the app has finished

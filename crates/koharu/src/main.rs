@@ -11,7 +11,10 @@ use tracing_subscriber::{Layer as _, filter::filter_fn, layer::SubscriberExt as 
 
 #[derive(clap::Parser)]
 #[command(version, about)]
-struct Cli {}
+struct Cli {
+    #[arg(long)]
+    background: bool,
+}
 
 #[tokio::main]
 #[tauri_runtime_cef::cef_entry_point]
@@ -26,7 +29,7 @@ async fn main() {
         };
     }
 
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
     let _guard = sentry::initialize();
     panic::install();
     let filter = filter_fn(|metadata| metadata.target() != "koharu_metrics");
@@ -42,6 +45,6 @@ async fn main() {
             .with(koharu::tracing::TimingLayer::new().with_filter(filter)),
     )
     .expect("failed to set the global tracing subscriber");
-    tokio::task::block_in_place(|| app::run(tauri::generate_context!()))
+    tokio::task::block_in_place(|| app::run(tauri::generate_context!(), cli.background))
         .expect("failed to run the desktop application");
 }

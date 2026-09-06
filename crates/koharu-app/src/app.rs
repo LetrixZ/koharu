@@ -1,6 +1,11 @@
 use anyhow::{Context as _, Result};
+use tauri::{
+    AppHandle, Manager as _, WindowEvent,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+};
 use tauri::{AppHandle, Manager as _, WindowEvent};
-use tauri_runtime_cef::{Cef, CefRuntime};
+use tauri_runtime_cef::{CefRuntime};
 use tokio::sync::Mutex;
 
 use crate::commands::{
@@ -65,8 +70,75 @@ pub(crate) async fn initialize(handle: AppHandle<CefRuntime>) -> Result<()> {
     Ok(())
 }
 
-pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
+struct TrayActions {
+    toggle: MenuItem<Cef>,
+}
+
+fn toggle_main_window(app: &AppHandle<CefRuntime>) {
+    let visible = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if visible {
+        hide_main_window(app);
+    } else {
+        restore_main_window(app);
+    }
+}
+
+fn restore_main_window(app: &AppHandle<CefRuntime>) {
+    set_background_mode(app, false);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    sync_tray_label(app);
+}
+
+fn hide_main_window(app: &AppHandle<CefRuntime>) {
+    set_background_mode(app, true);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    sync_tray_label(app);
+}
+
+fn sync_tray_label(app: &AppHandle<CefRuntime>) {
+    let Some(actions) = app.try_state::<TrayActions>() else {
+        return;
+    };
+    let visible = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    let _ = actions.toggle.set_text(if visible {
+        "Hide window"
+    } else {
+        "Show window"
+    });
+}
+
+fn set_background_mode(app: &AppHandle<CefRuntime>, background: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::ActivationPolicy;
+        let policy = if background {
+            ActivationPolicy::Accessory
+        } else {
+            ActivationPolicy::Regular
+        };
+        if let Err(error) = app.set_activation_policy(policy) {
+            tracing::warn!(%error, "failed to update the macOS activation policy");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, background);
+}
+
+pub fn run(context: tauri::Context<CefRuntime>, background: bool) -> Result<()> {
     let cef = Cef::default();
+
     #[cfg(debug_assertions)]
     let cef = cef.remote_debugging(tauri_runtime_cef::RemoteDebugging::Port {
         port: 4000,
@@ -92,11 +164,7 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|handle, _, _| {
-            if let Some(window) = handle.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            restore_main_window(&handle);
         }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -112,6 +180,14 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(crate::commands::bindings().invoke_handler())
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+                set_background_mode(&window.app_handle(), true);
+                sync_tray_label(&window.app_handle());
+            }
+        })
         .setup(move |application| {
             #[cfg(target_os = "windows")]
             koharu_runtime::Store::configure(
@@ -137,6 +213,30 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
             let handle = application.handle().clone();
             application.manage(koharu_desktop::Desktop::new()?);
             application.manage(AgentState::new(handle.clone())?);
+
+            let toggle_item =
+                MenuItem::with_id(application, "toggle", "Show window", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(application)?;
+            let quit_item = MenuItem::with_id(application, "quit", "Quit", true, Some("Cmd + Q"))?;
+            let menu = Menu::with_items(application, &[&toggle_item, &separator, &quit_item])?;
+            let _tray = TrayIconBuilder::new()
+                .icon(
+                    application
+                        .default_window_icon()
+                        .context("the application window icon is unavailable")?
+                        .clone(),
+                )
+                .menu(&menu)
+                .show_menu_on_left_click(true)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "toggle" => toggle_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(application)?;
+            application.manage(TrayActions {
+                toggle: toggle_item,
+            });
 
             let server = crate::api::ApiServer::new(handle.clone());
             match tauri::async_runtime::block_on(server.apply()) {
@@ -174,10 +274,16 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
             let window = tauri::WebviewWindowBuilder::from_config(application, window_config)?
                 .build()
                 .context("failed to create the main window")?;
-            window.show().context("failed to show the main window")?;
-            window
-                .set_focus()
-                .context("failed to focus the main window")?;
+            if background {
+                set_background_mode(&handle, true);
+                window.hide().context("failed to hide the main window")?;
+            } else {
+                window.show().context("failed to show the main window")?;
+                window
+                    .set_focus()
+                    .context("failed to focus the main window")?;
+            }
+            sync_tray_label(&handle);
             let initialization_handle = handle.clone();
             drop(tauri::async_runtime::spawn(async move {
                 initialize(initialization_handle.clone())
