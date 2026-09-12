@@ -41,7 +41,6 @@ koharu-renderer = { path = "crates/koharu-renderer" }
 koharu-rasterizer = { path = "crates/koharu-rasterizer", default-features = false }
 koharu-desktop = { path = "crates/koharu-desktop" }
 koharu-secrets = { path = "crates/koharu-secrets" }
-koharu-utils = { path = "crates/koharu-utils" }
 koharu-api = { path = "crates/koharu-api" }
 
 # external dependencies
