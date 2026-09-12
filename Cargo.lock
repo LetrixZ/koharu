@@ -4734,6 +4734,7 @@ dependencies = [
  "dirs 7.0.0",
  "futures",
  "futures-util",
+ "hayro",
  "image",
  "koharu-metrics",
  "koharu-ml",
@@ -4743,13 +4744,15 @@ dependencies = [
  "koharu-renderer",
  "koharu-scene",
  "koharu-secrets",
+ "koharu-storage",
  "koharu-translator",
- "koharu-utils",
  "parking_lot",
+ "rars",
  "rayon",
  "serde",
  "serde_json",
  "strum",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "uuid",
@@ -5187,28 +5190,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "koharu-utils"
-version = "0.82.1"
-dependencies = [
- "alphanumeric-sort",
- "anyhow",
- "dirs 7.0.0",
- "hayro",
- "image",
- "koharu-rasterizer",
- "koharu-renderer",
- "koharu-scene",
- "rars",
- "rayon",
- "serde",
- "specta",
- "strum",
- "tokio",
- "tracing",
- "zip 8.6.0",
 ]
 
 [[package]]

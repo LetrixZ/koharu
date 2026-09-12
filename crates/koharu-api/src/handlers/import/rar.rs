@@ -36,9 +36,9 @@ impl Drop for PageWriter {
     }
 }
 
-pub fn extract(path: &Path) -> Result<Vec<EncodedPage>> {
-    let archive = ArchiveReader::read_path(path)
-        .with_context(|| format!("failed to open RAR archive {}", path.display()))?;
+pub fn extract(bytes: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
+    let archive = ArchiveReader::read(&bytes)
+        .with_context(|| format!("failed to open RAR archive {}", filename))?;
     let images = Rc::new(RefCell::new(Vec::new()));
     archive
         .extract_to(None, |entry| {
@@ -73,7 +73,7 @@ pub fn extract(path: &Path) -> Result<Vec<EncodedPage>> {
                 }))
             }
         })
-        .with_context(|| format!("failed to extract RAR archive {}", path.display()))?;
+        .with_context(|| format!("failed to extract RAR archive {}", filename))?;
 
     let mut images = std::mem::take(&mut *images.borrow_mut());
     alphanumeric_sort::sort_slice_by_os_str_key(&mut images, |image| {
@@ -82,7 +82,7 @@ pub fn extract(path: &Path) -> Result<Vec<EncodedPage>> {
     if images.is_empty() {
         bail!(
             "RAR archive {} contains no supported raster images",
-            path.display()
+            filename
         );
     }
     Ok(images)
@@ -90,10 +90,7 @@ pub fn extract(path: &Path) -> Result<Vec<EncodedPage>> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::Cursor,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::io::Cursor;
 
     use image::ImageFormat;
     use rars::{
@@ -129,18 +126,8 @@ mod tests {
             &mut bytes,
         )
         .expect("encode RAR fixture");
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "koharu-import-rar-{}-{timestamp}.rar",
-            std::process::id()
-        ));
-        std::fs::write(&path, bytes).expect("write RAR fixture");
 
-        let images = extract(&path).expect("extract RAR fixture");
-        std::fs::remove_file(&path).expect("remove RAR fixture");
+        let images = extract(bytes, "koharu-import-rar.rar").expect("extract RAR fixture");
         assert_eq!(
             images
                 .iter()

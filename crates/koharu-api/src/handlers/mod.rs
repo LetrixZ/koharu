@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use axum::extract::FromRef;
+use axum::routing::delete;
 use axum::{
     Json, Router,
     extract::DefaultBodyLimit,
@@ -13,10 +14,13 @@ use koharu_pipeline::Pipeline;
 use koharu_rasterizer::Rasterizer;
 use koharu_renderer::Renderer;
 use serde::Serialize;
+use thiserror::Error;
 use tokio::sync::OnceCell;
 
 use super::handlers::{processing::Processing, projects::ProjectLibrary};
 
+mod editing;
+mod import;
 mod output;
 mod preferences;
 mod processing;
@@ -28,7 +32,7 @@ pub(crate) struct AppState {
     pub(crate) pipeline: Pipeline,
     pub(crate) processing: Arc<Processing>,
     pub(crate) renderer: Renderer,
-    pub(crate) rasterizer: OnceCell<Arc<Rasterizer>>,
+    rasterizer: OnceCell<Arc<Rasterizer>>,
 }
 
 impl AppState {
@@ -45,21 +49,55 @@ impl AppState {
     }
 }
 
-pub(crate) struct Error(anyhow::Error);
+pub(crate) type ApiResult<T, E = Error> = std::result::Result<T, E>;
 
-pub type ApiResult<T, E = Error> = std::result::Result<T, E>;
+pub(crate) struct Error(anyhow::Error);
 
 #[derive(Serialize)]
 struct Message {
     error: String,
 }
 
+#[derive(Debug, Error)]
+pub(crate) enum StatusError {
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("{0}")]
+    NotFound(String),
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
+        if let Some(koharu_storage::Error::Locked) = self.0.downcast_ref::<koharu_storage::Error>()
+        {
+            return (
+                StatusCode::LOCKED,
+                Json(Message {
+                    error: "Storage is locked".to_string(),
+                }),
+            )
+                .into_response();
+        }
+
+        if let Some(status_err) = self.0.downcast_ref::<StatusError>() {
+            let status = match status_err {
+                StatusError::BadRequest(_) => StatusCode::BAD_REQUEST,
+                StatusError::NotFound(_) => StatusCode::NOT_FOUND,
+            };
+
+            return (
+                status,
+                Json(Message {
+                    error: status_err.to_string(),
+                }),
+            )
+                .into_response();
+        }
+
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(Message {
-                error: format!("{}", self.0),
+                error: format!("{:#}", self.0),
             }),
         )
             .into_response()
@@ -75,7 +113,7 @@ where
     }
 }
 
-pub fn router(pipeline: Pipeline) -> Result<Router> {
+pub(crate) fn router(pipeline: Pipeline) -> Result<Router> {
     let state = AppState {
         library: ProjectLibrary::new()?,
         pipeline,
@@ -84,15 +122,23 @@ pub fn router(pipeline: Pipeline) -> Result<Router> {
         rasterizer: OnceCell::new(),
     };
 
-    // TODO: Add more commands from desktop side
+    // TODO: Add font list
+    // TODO: Add individual page download/preview
+    // TODO: Add invidivudal page info/layers
     Ok(Router::new()
         .route("/projects", get(projects::list_projects))
         .route("/projects", post(projects::create_project))
+        .route("/projects/{name}", delete(projects::delete))
         .route("/projects/{name}/pages", get(projects::list_pages))
         .route("/projects/{name}/pages", post(projects::import_pages))
-        .route("/projects/{name}/delete", post(projects::delete))
+        .route("/projects/{name}/pages/delete", post(editing::delete_pages))
+        .route(
+            "/projects/{name}/pages/{id}/export",
+            get(output::export_page),
+        )
         .route("/projects/{name}/process", post(processing::process))
         .route("/projects/{name}/export", post(output::export_pages))
+        .route("/jobs", get(processing::list_jobs))
         .route("/jobs/{id}", get(processing::get_job))
         .route("/jobs/{id}/events", get(processing::get_job_events))
         .route("/jobs/{id}/stop", post(processing::stop_job))

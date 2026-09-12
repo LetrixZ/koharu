@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 use hayro::hayro_interpret::InterpreterSettings;
@@ -14,16 +14,17 @@ use super::EncodedPage;
 // a time releases that working buffer before the next page is processed.
 const PDF_SCALE: f32 = 300.0 / 72.0;
 
-pub fn render(path: &Path) -> Result<Vec<EncodedPage>> {
-    let data = fs::read(path).with_context(|| format!("failed to read PDF {}", path.display()))?;
+pub fn render(data: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
     let pdf = Pdf::new(data)
-        .map_err(|error| anyhow::anyhow!("failed to parse PDF {}: {error:?}", path.display()))?;
+        .map_err(|error| anyhow::anyhow!("failed to parse PDF {}: {error:?}", filename))?;
     let pages = pdf.pages();
     let page_count = pages.len();
 
     if page_count == 0 {
-        bail!("PDF {} contains no pages", path.display());
+        bail!("PDF {} contains no pages", filename);
     }
+
+    let path = Path::new(filename);
 
     let stem = path
         .file_stem()
@@ -50,7 +51,7 @@ pub fn render(path: &Path) -> Result<Vec<EncodedPage>> {
                 .with_context(|| {
                     format!(
                         "failed to encode PDF page {page_number} of {} as PNG",
-                        path.display()
+                        filename
                     )
                 })?;
 
@@ -67,10 +68,7 @@ pub fn render(path: &Path) -> Result<Vec<EncodedPage>> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fmt::Write as _,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::fmt::Write as _;
 
     use image::GenericImageView as _;
 
@@ -112,17 +110,8 @@ mod tests {
 
     #[test]
     fn renders_pdf_pages_as_300_dpi_pngs() {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "koharu-import-pdf-{}-{timestamp}.pdf",
-            std::process::id()
-        ));
-        fs::write(&path, single_page_pdf()).expect("write PDF fixture");
-        let pages = render(&path).expect("render PDF");
-        fs::remove_file(&path).expect("remove PDF fixture");
+        let data = single_page_pdf();
+        let pages = render(data, "koharu-import-pdf.pdf").expect("render PDF");
 
         assert_eq!(pages.len(), 1);
         assert!(pages[0].name.ends_with("-001.png"));
