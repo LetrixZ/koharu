@@ -15,6 +15,7 @@ license.workspace = true
 [dependencies]
 clap = { workspace = true }
 console = { workspace = true }
+koharu-api = { workspace = true }
 koharu-app = { workspace = true }
 koharu-metrics = { workspace = true }
 log = { workspace = true }
