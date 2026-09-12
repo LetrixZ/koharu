@@ -17,7 +17,8 @@ use koharu_pipeline::{Operation, PipelineConfig, Scope, Stage};
 use koharu_scene::{EntityId, Snapshot, TextLayout as SceneTextLayout};
 use koharu_translator::{Language, Model, ModelSelection, Translator};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Cef, Manager as _};
+use tauri::{AppHandle, Manager as _};
+use tauri_runtime_cef::CefRuntime;
 
 use crate::commands::{
     import,
@@ -117,7 +118,7 @@ pub(super) struct ApiPage {
     translated: bool,
 }
 
-async fn current_project_view(app: &AppHandle<Cef>) -> Result<Option<ProjectView>> {
+async fn current_project_view(app: &AppHandle<CefRuntime>) -> Result<Option<ProjectView>> {
     let (info, pages) = {
         let current = app.state::<CurrentProject>();
         let project = current.project.lock().await;
@@ -171,7 +172,7 @@ fn page_translation_counts(snapshot: &Snapshot, page: EntityId) -> Result<(usize
     Ok((text_layers, translated))
 }
 
-async fn open_project_internal(app: &AppHandle<Cef>, name: &str) -> Result<(), ApiError> {
+async fn open_project_internal(app: &AppHandle<CefRuntime>, name: &str) -> Result<(), ApiError> {
     let library = app.state::<ProjectLibrary>().inner().clone();
     if !library
         .list()

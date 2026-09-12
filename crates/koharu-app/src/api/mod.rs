@@ -34,7 +34,8 @@ use axum::{
 };
 use koharu_secrets::ExposeSecret as _;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Cef};
+use tauri::AppHandle;
+use tauri_runtime_cef::CefRuntime;
 
 use self::handlers::{
     ApiError, create_project, delete_project, export_zip, get_job, get_jobs, get_project,
@@ -84,13 +85,13 @@ impl ApiConfig {
 /// Application state shared by the router and its handlers.
 #[derive(Clone)]
 pub(crate) struct ApiState {
-    app: AppHandle<Cef>,
+    app: AppHandle<CefRuntime>,
     token: Option<Arc<str>>,
 }
 
 /// Tauri-managed state owning the running REST API server, if any.
 pub(crate) struct ApiServer {
-    app: AppHandle<Cef>,
+    app: AppHandle<CefRuntime>,
     current: Mutex<Option<RunningServer>>,
 }
 
@@ -107,7 +108,7 @@ struct Started {
 }
 
 impl ApiServer {
-    pub(crate) fn new(app: AppHandle<Cef>) -> Self {
+    pub(crate) fn new(app: AppHandle<CefRuntime>) -> Self {
         Self {
             app,
             current: Mutex::new(None),

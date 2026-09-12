@@ -126,8 +126,6 @@ tauri = { git = "https://github.com/tauri-apps/tauri", rev = "fe0e5155c12459f325
     "dynamic-acl",
     "macos-private-api",
     "specta",
-    "x11",
-    "devtools",
     "tray-icon",
 ] }
 tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "fe0e5155c12459f3250dd9ae5867dd627d7c8286" }

@@ -4,8 +4,7 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
 };
-use tauri::{AppHandle, Manager as _, WindowEvent};
-use tauri_runtime_cef::{CefRuntime};
+use tauri_runtime_cef::{Cef, CefRuntime};
 use tokio::sync::Mutex;
 
 use crate::commands::{
@@ -71,7 +70,7 @@ pub(crate) async fn initialize(handle: AppHandle<CefRuntime>) -> Result<()> {
 }
 
 struct TrayActions {
-    toggle: MenuItem<Cef>,
+    toggle: MenuItem<CefRuntime>,
 }
 
 fn toggle_main_window(app: &AppHandle<CefRuntime>) {
@@ -138,7 +137,6 @@ fn set_background_mode(app: &AppHandle<CefRuntime>, background: bool) {
 
 pub fn run(context: tauri::Context<CefRuntime>, background: bool) -> Result<()> {
     let cef = Cef::default();
-
     #[cfg(debug_assertions)]
     let cef = cef.remote_debugging(tauri_runtime_cef::RemoteDebugging::Port {
         port: 4000,
