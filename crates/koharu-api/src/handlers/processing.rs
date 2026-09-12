@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::handlers::StatusError;
+
 use super::{
     ApiResult,
     projects::{Project, ProjectLibrary},
@@ -102,7 +104,9 @@ pub(crate) async fn process(
     {
         let mut stops = processing.stops.lock();
         if !stops.is_empty() {
-            return Err(anyhow::anyhow!("another process is already running").into());
+            return Err(
+                StatusError::BadRequest("another process is already running".to_string()).into(),
+            );
         }
         stops.insert(id, stop.clone());
     }
@@ -277,6 +281,14 @@ pub(crate) async fn process(
     }))
 }
 
+pub(crate) async fn list_jobs(
+    State(processing): State<Arc<Processing>>,
+) -> ApiResult<Json<Vec<Job>>> {
+    let jobs = processing.jobs.lock();
+    let jobs: Vec<Job> = jobs.iter().map(|(_, job)| job.clone()).collect();
+    Ok(Json(jobs))
+}
+
 pub(crate) async fn get_job(
     State(processing): State<Arc<Processing>>,
     Path(job_id): Path<String>,
@@ -285,7 +297,7 @@ pub(crate) async fn get_job(
     let jobs = processing.jobs.lock();
     let job = jobs
         .get(&id)
-        .with_context(|| format!("job {id} not found"))?;
+        .ok_or(StatusError::NotFound(format!("job {id} not found")))?;
     Ok(Json(job.clone()))
 }
 
@@ -297,7 +309,7 @@ pub(crate) async fn stop_job(
     let stops = processing.stops.lock();
     let stop = stops
         .get(&id)
-        .with_context(|| format!("job {id} is not running"))?;
+        .ok_or(StatusError::NotFound(format!("job {id} is not running")))?;
     stop.stop();
     Ok(StatusCode::OK)
 }

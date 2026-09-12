@@ -20,6 +20,7 @@ dirs = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 image = { workspace = true }
+hayro = { workspace = true }
 koharu-metrics = { workspace = true }
 koharu-ml = { workspace = true }
 koharu-pipeline = { workspace = true }
@@ -28,14 +29,16 @@ koharu-rasterizer = { workspace = true }
 koharu-renderer = { workspace = true }
 koharu-scene = { workspace = true }
 koharu-secrets = { workspace = true }
+koharu-storage = { workspace = true }
 koharu-translator = { workspace = true }
-koharu-utils = { workspace = true }
 parking_lot = { workspace = true }
+rars = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 strum = { workspace = true }
 tracing = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 zip = { workspace = true }
