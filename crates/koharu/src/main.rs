@@ -6,12 +6,16 @@ mod mallinfo;
 use clap::Parser as _;
 use koharu::panic;
 use koharu::sentry;
+use koharu_api as api;
 use koharu_app as app;
 use tracing_subscriber::{Layer as _, filter::filter_fn, layer::SubscriberExt as _};
 
 #[derive(clap::Parser)]
 #[command(version, about)]
-struct Cli {}
+struct Cli {
+    #[arg(long, default_value_t = false)]
+    headless: bool,
+}
 
 #[tokio::main]
 #[tauri_runtime_cef::cef_entry_point]
@@ -26,7 +30,7 @@ async fn main() {
         };
     }
 
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
     let _guard = sentry::initialize();
     panic::install();
     let filter = filter_fn(|metadata| metadata.target() != "koharu_metrics");
@@ -42,6 +46,11 @@ async fn main() {
             .with(koharu::tracing::TimingLayer::new().with_filter(filter)),
     )
     .expect("failed to set the global tracing subscriber");
-    tokio::task::block_in_place(|| app::run(tauri::generate_context!()))
-        .expect("failed to run the desktop application");
+
+    if cli.headless {
+        api::run().await.expect("failed to run the headless server");
+    } else {
+        tokio::task::block_in_place(|| app::run(tauri::generate_context!()))
+            .expect("failed to run the desktop application");
+    }
 }

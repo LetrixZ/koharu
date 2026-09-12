@@ -41,10 +41,14 @@ koharu-renderer = { path = "crates/koharu-renderer" }
 koharu-rasterizer = { path = "crates/koharu-rasterizer", default-features = false }
 koharu-desktop = { path = "crates/koharu-desktop" }
 koharu-secrets = { path = "crates/koharu-secrets" }
+koharu-utils = { path = "crates/koharu-utils" }
+koharu-api = { path = "crates/koharu-api" }
 
 # external dependencies
 alphanumeric-sort = "1.5.8"
 arc-swap = "1.9.2"
+async-stream = "0.3"
+axum = { version = "0.8.9", features = ["macros", "multipart"] }
 hayro = "0.7.1"
 image = "0.25.10"
 webp = { version = "0.3.1" }
@@ -81,6 +85,7 @@ zip = { version = "8.6.0", features = ["deflate"] }
 dirs = "7.0.0"
 futures = "0.3.34"
 futures-channel = "0.3.34"
+futures-util = "0.3"
 hf-hub = "=1.0.0"
 eventsource-stream = "0.2.3"
 encoding_rs = "0.8.41"
