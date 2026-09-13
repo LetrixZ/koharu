@@ -122,9 +122,6 @@ pub(crate) fn router(pipeline: Pipeline) -> Result<Router> {
         rasterizer: OnceCell::new(),
     };
 
-    // TODO: Add font list
-    // TODO: Add individual page download/preview
-    // TODO: Add invidivudal page info/layers
     Ok(Router::new()
         .route("/projects", get(projects::list_projects))
         .route("/projects", post(projects::create_project))
@@ -144,6 +141,7 @@ pub(crate) fn router(pipeline: Pipeline) -> Result<Router> {
         .route("/jobs/{id}/stop", post(processing::stop_job))
         .route("/preferences", get(preferences::get_preferences))
         .route("/preferences", put(preferences::save_preferences))
+        .route("/preferences/fonts", get(preferences::list_fonts))
         .route(
             "/preferences/models",
             get(preferences::get_translation_models),

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, convert::Infallible, fmt, sync::Arc};
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use axum::{
     Json,
     extract::{self, Path, State},

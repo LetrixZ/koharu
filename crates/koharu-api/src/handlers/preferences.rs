@@ -1,9 +1,13 @@
 use std::fmt;
 
 use anyhow::Result;
-use axum::{Json, extract, http::StatusCode};
+use axum::{
+    Json,
+    extract::{self, State},
+    http::StatusCode,
+};
 use koharu_pipeline::PipelineConfig;
-use koharu_renderer::TypesettingConfig;
+use koharu_renderer::{FontFamily, Renderer, TypesettingConfig};
 use koharu_secrets::ExposeSecret as _;
 use koharu_translator::{Language, Model, Provider, ProviderConfig, ProvidersConfig};
 use serde::{Deserialize, Serialize};
@@ -196,4 +200,17 @@ fn remember_pipeline_profiles(config: &mut PipelineConfig) {
     if let koharu_pipeline::InpaintingModel::RoremMixed(settings) = &config.inpainting {
         config.processor.rorem_mixed = Some(settings.clone());
     }
+}
+
+pub(crate) async fn list_fonts(
+    State(renderer): State<Renderer>,
+) -> ApiResult<Json<Vec<FontFamily>>> {
+    Ok(Json(
+        renderer
+            .available_fonts()
+            .await?
+            .into_iter()
+            .map(FontFamily::from)
+            .collect(),
+    ))
 }

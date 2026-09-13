@@ -13,8 +13,24 @@ use tracing_subscriber::{Layer as _, filter::filter_fn, layer::SubscriberExt as 
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Cli {
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        help = "Start the REST API server instead of the GUI",
+        default_value_t = false
+    )]
     headless: bool,
+    #[arg(
+        long,
+        help = "Set the hostname to use for the server",
+        default_value_t = "127.0.0.1".to_string()
+    )]
+    host: String,
+    #[arg(
+        long,
+        help = "Set the port to use for the server",
+        default_value_t = 8148
+    )]
+    port: u16,
 }
 
 #[tokio::main]
@@ -48,7 +64,9 @@ async fn main() {
     .expect("failed to set the global tracing subscriber");
 
     if cli.headless {
-        api::run().await.expect("failed to run the headless server");
+        api::run(cli.host, cli.port)
+            .await
+            .expect("failed to run the headless server");
     } else {
         tokio::task::block_in_place(|| app::run(tauri::generate_context!()))
             .expect("failed to run the desktop application");
