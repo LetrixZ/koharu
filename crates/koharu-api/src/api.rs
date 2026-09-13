@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 
 use crate::handlers;
 
-pub async fn run() -> Result<()> {
+pub async fn run(host: String, port: u16) -> Result<()> {
     koharu_ml::init()
         .await
         .context("failed to initialize the ML runtime")?;
@@ -18,8 +18,9 @@ pub async fn run() -> Result<()> {
 
     let app = handlers::router(pipeline)?;
 
-    // TODO: Get address from config
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8148").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("{host}:{port}"))
+        .await
+        .unwrap();
     axum::serve(listener, app).await.unwrap();
 
     Ok(())
