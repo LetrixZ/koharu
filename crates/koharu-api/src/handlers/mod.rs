@@ -68,15 +68,37 @@ pub(crate) enum StatusError {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        if let Some(koharu_storage::Error::Locked) = self.0.downcast_ref::<koharu_storage::Error>()
-        {
-            return (
-                StatusCode::LOCKED,
-                Json(Message {
-                    error: "Storage is locked".to_string(),
-                }),
-            )
-                .into_response();
+        if let Some(error) = self.0.downcast_ref::<koharu_scene::Error>() {
+            match error {
+                koharu_scene::Error::Storage(koharu_storage::Error::NotAProject) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(Message {
+                            error: "project not found".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+                koharu_scene::Error::Storage(koharu_storage::Error::Locked) => {
+                    return (
+                        StatusCode::LOCKED,
+                        Json(Message {
+                            error: "project is locked".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+                koharu_scene::Error::Storage(koharu_storage::Error::UnsupportedFormat(_)) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(Message {
+                            error: error.to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+                _ => {}
+            }
         }
 
         if let Some(status_err) = self.0.downcast_ref::<StatusError>() {
@@ -125,6 +147,7 @@ pub(crate) fn router(pipeline: Pipeline) -> Result<Router> {
     Ok(Router::new()
         .route("/projects", get(projects::list_projects))
         .route("/projects", post(projects::create_project))
+        .route("/projects/{name}", get(projects::get_project))
         .route("/projects/{name}", delete(projects::delete))
         .route("/projects/{name}/pages", get(projects::list_pages))
         .route("/projects/{name}/pages", post(projects::import_pages))

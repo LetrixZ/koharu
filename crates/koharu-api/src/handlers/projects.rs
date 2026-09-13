@@ -275,6 +275,14 @@ pub(crate) async fn create_project(
     Ok(Json(ProjectSummary { name: project.name }))
 }
 
+pub(crate) async fn get_project(
+    State(library): State<ProjectLibrary>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<ProjectSummary>> {
+    let project = library.open(&name).await?;
+    Ok(Json(ProjectSummary { name: project.name }))
+}
+
 pub(crate) async fn delete(
     State(library): State<ProjectLibrary>,
     Path(name): Path<String>,
