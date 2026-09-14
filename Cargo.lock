@@ -4754,7 +4754,6 @@ dependencies = [
  "strum",
  "thiserror 2.0.20",
  "tokio",
- "tracing",
  "uuid",
  "zip 8.6.0",
 ]
