@@ -242,6 +242,17 @@ impl PipelineConfig {
         }
         Ok(())
     }
+
+    pub fn remember_profiles(&mut self) {
+        let DetectionModel::KoharuLayoutRFDetrSeg2XL(settings) = &self.detection;
+        self.processor.koharu_layout_rfdetr_seg_2xl = Some(settings.clone());
+        if let InpaintingModel::Flux2Klein(settings) = &self.inpainting {
+            self.processor.flux2_klein = Some(settings.clone());
+        }
+        if let InpaintingModel::RoremMixed(settings) = &self.inpainting {
+            self.processor.rorem_mixed = Some(settings.clone());
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, Type)]

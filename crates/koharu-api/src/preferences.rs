@@ -4,18 +4,15 @@ use anyhow::Result;
 use koharu_pipeline::PipelineConfig;
 use koharu_renderer::TypesettingConfig;
 use koharu_secrets::ExposeSecret as _;
-use koharu_translator::{Language, Model, Provider, ProviderConfig, ProvidersConfig};
+use koharu_translator::{Language, Provider, ProviderConfig, ProvidersConfig};
 use serde::{Deserialize, Serialize};
-use specta::Type;
 
-use super::Error;
-
-#[derive(Clone, Debug, Serialize, Type)]
-pub struct Preferences {
-    pub pipeline: PipelineConfig,
-    pub providers: ProviderPreferences,
-    pub typesetting: TypesettingConfig,
-    pub languages: Vec<LanguageChoice>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Preferences {
+    pub(crate) pipeline: PipelineConfig,
+    pub(crate) providers: ProviderPreferences,
+    pub(crate) typesetting: TypesettingConfig,
+    pub(crate) languages: Vec<LanguageChoice>,
 }
 
 impl Preferences {
@@ -41,16 +38,16 @@ impl Preferences {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Type)]
-pub struct ProviderPreferences {
-    pub entries: Vec<ProviderPreference>,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct ProviderPreferences {
+    pub(crate) entries: Vec<ProviderPreference>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Type)]
-pub struct ProviderPreference {
-    pub name: String,
-    pub config: ProviderConfig,
-    pub credential: Option<CredentialInput>,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct ProviderPreference {
+    pub(crate) name: String,
+    pub(crate) config: ProviderConfig,
+    pub(crate) credential: Option<CredentialInput>,
 }
 
 impl ProviderPreferences {
@@ -76,7 +73,7 @@ impl ProviderPreferences {
         Ok(Self { entries })
     }
 
-    fn into_config(self) -> Result<ProvidersConfig> {
+    pub(crate) fn into_config(self) -> Result<ProvidersConfig> {
         let mut configs = Vec::with_capacity(self.entries.len());
         let mut credentials = Vec::with_capacity(self.entries.len().saturating_sub(1));
         for entry in self.entries {
@@ -100,11 +97,11 @@ impl ProviderPreferences {
     }
 }
 
-#[derive(Clone, Default, Deserialize, Serialize, Type)]
-pub struct CredentialInput {
-    pub configured: bool,
-    pub value: Option<String>,
-    pub clear: bool,
+#[derive(Clone, Default, Deserialize, Serialize)]
+pub(crate) struct CredentialInput {
+    pub(crate) configured: bool,
+    pub(crate) value: Option<String>,
+    pub(crate) clear: bool,
 }
 
 impl fmt::Debug for CredentialInput {
@@ -142,33 +139,21 @@ impl CredentialInput {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Type)]
-pub struct LanguageChoice {
-    pub tag: String,
-    pub name: String,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct LanguageChoice {
+    pub(crate) tag: String,
+    pub(crate) name: String,
 }
 
-#[tracing::instrument(
-    target = "koharu_metrics",
-    name = "preferences_saved",
-    skip_all,
-    fields(setting = "application")
-)]
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn save_preferences(
-    mut pipeline: PipelineConfig,
-    providers: ProviderPreferences,
-    typesetting: TypesettingConfig,
-) -> std::result::Result<Preferences, Error> {
-    pipeline.remember_profiles();
-    let providers = providers.into_config()?;
+pub(crate) async fn save_preferences(mut preferences: Preferences) -> Result<()> {
+    preferences.pipeline.remember_profiles();
+    let providers = preferences.providers.into_config()?;
     let pipeline_config = PipelineConfig::load()?;
     let providers_config = ProvidersConfig::load()?;
     let typesetting_config = TypesettingConfig::load()?;
     {
         let mut current = pipeline_config.write()?;
-        *current = pipeline;
+        *current = preferences.pipeline;
         current.save()?;
     }
     {
@@ -178,26 +163,8 @@ pub(crate) async fn save_preferences(
     }
     {
         let mut current = typesetting_config.write()?;
-        *current = typesetting;
+        *current = preferences.typesetting;
         current.save()?;
     }
-    let preferences = Preferences::load()?;
-    tracing::info!(
-        target: "koharu_metrics",
-        metric = "preference_changed",
-        setting = "application",
-    );
-    Ok(preferences)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn get_preferences() -> std::result::Result<Preferences, Error> {
-    Ok(Preferences::load()?)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn get_translation_models() -> std::result::Result<Vec<Model>, Error> {
-    Ok(koharu_translator::Translator::models().await?)
+    Ok(())
 }

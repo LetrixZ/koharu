@@ -13,11 +13,7 @@ use tracing_subscriber::{Layer as _, filter::filter_fn, layer::SubscriberExt as 
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Cli {
-    #[arg(
-        long,
-        help = "Start the REST API server instead of the GUI",
-        default_value_t = false
-    )]
+    #[arg(long, help = "Start the REST API server instead of the GUI")]
     headless: bool,
     #[arg(
         long,
@@ -31,6 +27,8 @@ struct Cli {
         default_value_t = 8148
     )]
     port: u16,
+    #[arg(long, help = "Force CPI-only inferance")]
+    cpu: bool,
 }
 
 #[tokio::main]
@@ -64,7 +62,7 @@ async fn main() {
     .expect("failed to set the global tracing subscriber");
 
     if cli.headless {
-        api::run(cli.host, cli.port)
+        api::run(cli.host, cli.port, cli.cpu)
             .await
             .expect("failed to run the headless server");
     } else {

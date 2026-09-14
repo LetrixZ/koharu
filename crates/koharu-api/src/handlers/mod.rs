@@ -17,14 +17,14 @@ use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::OnceCell;
 
-use super::handlers::{processing::Processing, projects::ProjectLibrary};
+use crate::processing::Processing;
+use crate::project::ProjectLibrary;
 
 mod editing;
-mod import;
 mod output;
 mod preferences;
 mod processing;
-mod projects;
+mod project;
 
 #[derive(Clone, FromRef)]
 pub(crate) struct AppState {
@@ -79,16 +79,10 @@ impl IntoResponse for Error {
                     )
                         .into_response();
                 }
-                koharu_scene::Error::Storage(koharu_storage::Error::Locked) => {
-                    return (
-                        StatusCode::LOCKED,
-                        Json(Message {
-                            error: "project is locked".to_string(),
-                        }),
-                    )
-                        .into_response();
-                }
-                koharu_scene::Error::Storage(koharu_storage::Error::UnsupportedFormat(_)) => {
+                error @ (koharu_scene::Error::Storage(
+                    koharu_storage::Error::UnsupportedFormat(_),
+                )
+                | koharu_scene::Error::Storage(koharu_storage::Error::Locked)) => {
                     return (
                         StatusCode::BAD_REQUEST,
                         Json(Message {
@@ -145,13 +139,19 @@ pub(crate) fn router(pipeline: Pipeline) -> Result<Router> {
     };
 
     Ok(Router::new()
-        .route("/projects", get(projects::list_projects))
-        .route("/projects", post(projects::create_project))
-        .route("/projects/{name}", get(projects::get_project))
-        .route("/projects/{name}", delete(projects::delete))
-        .route("/projects/{name}/pages", get(projects::list_pages))
-        .route("/projects/{name}/pages", post(projects::import_pages))
+        .route("/projects", get(project::list_projects))
+        .route("/projects", post(project::create_project))
+        .route("/projects/{name}", get(project::get_project))
+        .route("/projects/{name}", delete(project::delete))
+        .route("/projects/{name}/pages", get(project::list_pages))
+        .route("/projects/{name}/pages", post(project::import_pages))
         .route("/projects/{name}/pages/delete", post(editing::delete_pages))
+        .route("/projects/{name}/pages/{id}", get(project::get_page))
+        .route(
+            "/projects/{name}/pages/{id}/rename",
+            post(editing::rename_page),
+        )
+        .route("/projects/{name}/pages/{id}/move", post(editing::move_page))
         .route(
             "/projects/{name}/pages/{id}/export",
             get(output::export_page),
@@ -160,6 +160,7 @@ pub(crate) fn router(pipeline: Pipeline) -> Result<Router> {
         .route("/projects/{name}/export", post(output::export_pages))
         .route("/jobs", get(processing::list_jobs))
         .route("/jobs/{id}", get(processing::get_job))
+        .route("/jobs/{id}", delete(processing::delete_job))
         .route("/jobs/{id}/events", get(processing::get_job_events))
         .route("/jobs/{id}/stop", post(processing::stop_job))
         .route("/preferences", get(preferences::get_preferences))

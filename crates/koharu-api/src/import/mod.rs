@@ -15,7 +15,7 @@ mod zip;
 
 #[derive(Clone, Copy, EnumIter, EnumMessage, EnumString)]
 #[strum(ascii_case_insensitive)]
-pub(super) enum Format {
+pub(crate) enum Format {
     #[strum(
         serialize = "png",
         serialize = "jpg",
@@ -32,45 +32,20 @@ pub(super) enum Format {
 }
 
 #[derive(Debug)]
-pub(super) struct EncodedPage {
-    pub(super) name: String,
-    pub(super) bytes: Vec<u8>,
+pub(crate) struct EncodedPage {
+    pub(crate) name: String,
+    pub(crate) bytes: Vec<u8>,
 }
 
-pub(super) struct Page {
-    pub(super) name: String,
-    pub(super) bytes: Arc<[u8]>,
-    pub(super) format: ImageFormat,
-    pub(super) width: u32,
-    pub(super) height: u32,
+pub(crate) struct Page {
+    pub(crate) name: String,
+    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) format: ImageFormat,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
-fn decode(path: &Path, source: EncodedPage) -> Result<Page> {
-    let EncodedPage { name, bytes } = source;
-    let format = image::guess_format(&bytes).with_context(|| {
-        format!(
-            "failed to identify imported image {} ({name})",
-            path.display()
-        )
-    })?;
-    let (width, height) = ImageReader::with_format(Cursor::new(bytes.as_slice()), format)
-        .into_dimensions()
-        .with_context(|| {
-            format!(
-                "failed to read dimensions of imported image {} ({name})",
-                path.display()
-            )
-        })?;
-    Ok(Page {
-        name,
-        bytes: Arc::<[u8]>::from(bytes),
-        format,
-        width,
-        height,
-    })
-}
-
-pub(super) fn import(mut images: Vec<(PathBuf, Vec<u8>)>) -> Result<Vec<Page>> {
+pub(crate) fn import(mut images: Vec<(PathBuf, Vec<u8>)>) -> Result<Vec<Page>> {
     alphanumeric_sort::sort_slice_by_os_str_key(&mut images, |image| &image.0);
     let mut groups = images
         .into_par_iter()
@@ -105,4 +80,29 @@ pub(super) fn import(mut images: Vec<(PathBuf, Vec<u8>)>) -> Result<Vec<Page>> {
         pages.append(group);
     }
     Ok(pages)
+}
+
+fn decode(path: &Path, source: EncodedPage) -> Result<Page> {
+    let EncodedPage { name, bytes } = source;
+    let format = image::guess_format(&bytes).with_context(|| {
+        format!(
+            "failed to identify imported image {} ({name})",
+            path.display()
+        )
+    })?;
+    let (width, height) = ImageReader::with_format(Cursor::new(bytes.as_slice()), format)
+        .into_dimensions()
+        .with_context(|| {
+            format!(
+                "failed to read dimensions of imported image {} ({name})",
+                path.display()
+            )
+        })?;
+    Ok(Page {
+        name,
+        bytes: Arc::<[u8]>::from(bytes),
+        format,
+        width,
+        height,
+    })
 }
