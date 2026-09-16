@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::{handlers::StatusError, project::Project};
+use crate::{
+    handlers::StatusError,
+    project::{Project, StageProgress},
+};
 
 #[derive(Default)]
 pub(crate) struct Processing {
@@ -19,15 +22,22 @@ pub(crate) struct Processing {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Job {
-    pub id: JobId,
-    pub state: JobState,
-    pub completed: usize,
-    pub total: usize,
-    pub page: Option<koharu_scene::EntityId>,
-    pub stage: Option<koharu_pipeline::Stage>,
-    pub model: Option<String>,
-    pub error: Option<String>,
+pub(crate) struct Job {
+    pub(crate) id: JobId,
+    pub(crate) state: JobState,
+    pub(crate) completed: usize,
+    pub(crate) total: usize,
+    pub(crate) page: Option<koharu_scene::EntityId>,
+    pub(crate) stage: Option<koharu_pipeline::Stage>,
+    pub(crate) model: Option<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) pages: Vec<PageProgress>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct PageProgress {
+    pub(crate) page: koharu_scene::EntityId,
+    pub(crate) stages: StageProgress,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -55,7 +65,7 @@ impl fmt::Display for JobId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum JobState {
+pub(crate) enum JobState {
     Running,
     Finished,
     Failed,
@@ -89,6 +99,7 @@ pub(crate) async fn process(
         stage: None,
         model: None,
         error: None,
+        pages: Vec::new(),
     };
     processing.jobs.lock().insert(id, job.clone());
     let (tx, _) = broadcast::channel::<Job>(16);
@@ -107,46 +118,88 @@ pub(crate) async fn process(
             inpainting_mask,
         };
         request.progress = Some(Arc::new(move |event| {
-            let update = match event {
+            let mut jobs = progress_processing.jobs.lock();
+            let Some(job) = jobs.get_mut(&progress_id) else {
+                return;
+            };
+
+            match event {
                 Progress::Started { pages, stages } => {
+                    job.pages = pages
+                        .iter()
+                        .map(|page_id| PageProgress {
+                            page: *page_id,
+                            stages: StageProgress {
+                                detection: false,
+                                ocr: false,
+                                translation: false,
+                                inpainting: false,
+                            },
+                        })
+                        .collect();
                     let mut progress = progress.lock();
                     *progress = (0, pages.len().saturating_mul(stages.len()));
-                    Some((0, progress.1, None, None, None))
+                    job.completed = 0;
+                    job.total = progress.1;
                 }
                 Progress::Loading { page, stage, model } => {
-                    let progress = progress.lock();
-                    Some((progress.0, progress.1, Some(page), Some(stage), Some(model)))
+                    job.page = Some(page);
+                    job.stage = Some(stage);
+                    job.model = Some(model);
                 }
                 Progress::Finished {
                     page, stage, model, ..
                 } => {
-                    if stage != koharu_pipeline::Stage::Translation {}
+                    if let Some(page_progress) = job.pages.iter_mut().find(|p| p.page == page) {
+                        match stage {
+                            koharu_pipeline::Stage::Detection => {
+                                page_progress.stages.detection = true
+                            }
+                            koharu_pipeline::Stage::Ocr => page_progress.stages.ocr = true,
+                            koharu_pipeline::Stage::Translation => {
+                                page_progress.stages.translation = true
+                            }
+                            koharu_pipeline::Stage::Inpainting => {
+                                page_progress.stages.inpainting = true
+                            }
+                        }
+                    }
                     let mut progress = progress.lock();
                     progress.0 = progress.0.saturating_add(1).min(progress.1);
-                    Some((progress.0, progress.1, Some(page), Some(stage), Some(model)))
+                    job.completed = progress.0;
+                    job.page = Some(page);
+                    job.stage = Some(stage);
+                    job.model = Some(model);
                 }
                 Progress::Skipped { page, stage } => {
+                    if let Some(page_progress) = job.pages.iter_mut().find(|p| p.page == page) {
+                        match stage {
+                            koharu_pipeline::Stage::Detection => {
+                                page_progress.stages.detection = true
+                            }
+                            koharu_pipeline::Stage::Ocr => page_progress.stages.ocr = true,
+                            koharu_pipeline::Stage::Translation => {
+                                page_progress.stages.translation = true
+                            }
+                            koharu_pipeline::Stage::Inpainting => {
+                                page_progress.stages.inpainting = true
+                            }
+                        }
+                    }
                     let mut progress = progress.lock();
                     progress.0 = progress.0.saturating_add(1).min(progress.1);
-                    Some((progress.0, progress.1, Some(page), Some(stage), None))
+                    job.completed = progress.0;
+                    job.page = Some(page);
+                    job.stage = Some(stage);
                 }
-                Progress::Running { .. } => None,
-            };
-            if let Some((completed, total, page, stage, model)) = update {
-                let mut jobs = progress_processing.jobs.lock();
-                if let Some(job) = jobs.get_mut(&progress_id).map(|job| {
-                    job.completed = completed;
-                    job.total = total;
-                    job.page = page;
-                    job.stage = stage;
-                    job.model = model;
-                    job.clone()
-                }) {
-                    let channels = progress_processing.jobs_channels.lock();
-                    channels
-                        .get(&progress_id)
-                        .map(|sender| _ = sender.send(job));
-                }
+                Progress::Running { .. } => {}
+            }
+
+            let job = job.clone();
+            drop(jobs);
+            let channels = progress_processing.jobs_channels.lock();
+            if let Some(sender) = channels.get(&progress_id) {
+                let _ = sender.send(job);
             }
         }));
 

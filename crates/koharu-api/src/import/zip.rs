@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result, bail};
 
 use super::{EncodedPage, Format};
 
-pub fn extract(bytes: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
+pub(super) fn extract(bytes: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
     let cursor = Cursor::new(bytes);
     let mut archive = ::zip::ZipArchive::new(cursor)
         .with_context(|| format!("failed to read ZIP/CBZ container {}", filename))?;

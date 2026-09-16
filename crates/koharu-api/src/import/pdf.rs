@@ -14,7 +14,7 @@ use super::EncodedPage;
 // a time releases that working buffer before the next page is processed.
 const PDF_SCALE: f32 = 300.0 / 72.0;
 
-pub fn render(data: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
+pub(super) fn render(data: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
     let pdf = Pdf::new(data)
         .map_err(|error| anyhow::anyhow!("failed to parse PDF {}: {error:?}", filename))?;
     let pages = pdf.pages();

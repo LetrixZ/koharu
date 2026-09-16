@@ -36,7 +36,7 @@ impl Drop for PageWriter {
     }
 }
 
-pub fn extract(bytes: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
+pub(super) fn extract(bytes: Vec<u8>, filename: &str) -> Result<Vec<EncodedPage>> {
     let archive = ArchiveReader::read(&bytes)
         .with_context(|| format!("failed to open RAR archive {}", filename))?;
     let images = Rc::new(RefCell::new(Vec::new()));

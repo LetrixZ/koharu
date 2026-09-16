@@ -2,12 +2,12 @@ use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use koharu_scene::{
-    AssetInput, AssetMetadata, AssetRole, At, Commit, EntityId, PageDraft, RemovePolicy, Session,
-    Snapshot, TextLayout as SceneTextLayout,
+    AssetInput, AssetMetadata, AssetRole, At, Commit, EntityId, PageDraft, RasterLayer,
+    RasterLayerKind, Region, RemovePolicy, Session, Snapshot, SourceText, TextContent, Translation,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-use super::import::import;
+use crate::import::import;
 
 #[derive(Clone)]
 pub(crate) struct ProjectLibrary {
@@ -22,7 +22,6 @@ pub(crate) struct Project {
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ProjectState {
     pub(crate) name: String,
-    pub(crate) translation_state: TranslationState,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -35,35 +34,7 @@ pub(crate) struct Page {
     pub(crate) id: EntityId,
     pub(crate) label: String,
     pub(crate) size: PageSize,
-    pub(crate) text_layers: Vec<TextLayer>,
-    pub(crate) translation_state: TranslationState,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct TextLayer {
-    pub(crate) id: EntityId,
-    pub(crate) source: Option<SourceText>,
-    pub(crate) translation: Option<Translation>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct SourceText {
-    pub(crate) text: String,
-    pub(crate) language: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct Translation {
-    pub(crate) text: String,
-    pub(crate) language: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TranslationState {
-    NoText,
-    Untranslated,
-    Translated,
+    pub(crate) stages: StageProgress,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -71,12 +42,21 @@ pub(crate) struct PageSummary {
     pub(crate) id: EntityId,
     pub(crate) label: String,
     pub(crate) size: PageSize,
+    pub(crate) stages: StageProgress,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub(crate) struct PageSize {
     pub(crate) width: f64,
     pub(crate) height: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct StageProgress {
+    pub(crate) detection: bool,
+    pub(crate) ocr: bool,
+    pub(crate) translation: bool,
+    pub(crate) inpainting: bool,
 }
 
 impl ProjectLibrary {
@@ -208,6 +188,7 @@ impl Project {
                         width: value.width,
                         height: value.height,
                     },
+                    stages: compute_stage_state(&snapshot, page.id())?,
                 })
             })
             .collect()
@@ -284,8 +265,6 @@ impl Project {
     pub(crate) async fn page(&self, page: EntityId) -> Result<Page> {
         let snapshot = self.snapshot();
         let value = snapshot.page(page)?.page()?;
-        let text_layers = collect_text_layers(&snapshot, page)?;
-        let translation_state = get_translation_state(&text_layers);
         Ok(Page {
             id: page,
             label: value.label,
@@ -293,15 +272,13 @@ impl Project {
                 width: value.width,
                 height: value.height,
             },
-            text_layers,
-            translation_state,
+            stages: compute_stage_state(&snapshot, page)?,
         })
     }
 
     pub(crate) async fn state(&self) -> Result<ProjectState> {
         Ok(ProjectState {
             name: self.name.clone(),
-            translation_state: compute_project_translation_state(&self.session)?,
         })
     }
 }
@@ -362,70 +339,40 @@ fn placement(siblings: &[EntityId], moving: EntityId, index: usize) -> At {
         .map_or(At::End, At::Before)
 }
 
-fn collect_text_layers(snapshot: &Snapshot, page: EntityId) -> Result<Vec<TextLayer>> {
-    let mut text_layers = Vec::new();
+fn compute_stage_state(snapshot: &Snapshot, page: EntityId) -> Result<StageProgress> {
+    let mut state = StageProgress {
+        detection: false,
+        ocr: false,
+        translation: false,
+        inpainting: false,
+    };
+
     for descendant in snapshot.descendants(page)? {
-        let child = descendant.id();
-        if snapshot.component::<SceneTextLayout>(child)?.is_none() {
-            continue;
+        let id = descendant.id();
+
+        if snapshot.component::<Region>(id)?.is_some() {
+            state.detection = true;
         }
-        let text_layer = snapshot.text_layer(child)?;
-        let content = text_layer.content()?;
-        let source = content.source()?.map(|source| SourceText {
-            text: source.text.value,
-            language: source.language.map(|language| language.to_string()),
-        });
-        let translation = content.translation()?.map(|translation| Translation {
-            text: translation.text.value,
-            language: translation.language.map(|language| language.to_string()),
-        });
-        text_layers.push(TextLayer {
-            id: child,
-            source,
-            translation,
-        });
-    }
-    Ok(text_layers)
-}
 
-fn get_translation_state(text_layers: &[TextLayer]) -> TranslationState {
-    if text_layers.is_empty() {
-        return TranslationState::NoText;
+        if snapshot
+            .component::<RasterLayer>(id)?
+            .is_some_and(|layer| layer.kind == RasterLayerKind::Cleanup)
+        {
+            state.inpainting = true;
+        }
     }
 
-    if text_layers.iter().all(|layer| layer.translation.is_some()) {
-        TranslationState::Translated
-    } else {
-        TranslationState::Untranslated
+    for descendant in snapshot.descendants(page)? {
+        let id = descendant.id();
+        if snapshot.component::<TextContent>(id)?.is_some() {
+            if snapshot.component::<SourceText>(id)?.is_some() {
+                state.ocr = true;
+            }
+            if snapshot.component::<Translation>(id)?.is_some() {
+                state.translation = true;
+            }
+        }
     }
-}
 
-fn compute_project_translation_state(session: &Session) -> Result<TranslationState> {
-    let snapshot = session.snapshot();
-    let states: Vec<TranslationState> = snapshot
-        .pages()
-        .map(|page| {
-            let text_layers = collect_text_layers(&snapshot, page.id())?;
-            Ok(get_translation_state(&text_layers))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(aggregate_translation_states(&states))
-}
-
-fn aggregate_translation_states(states: &[TranslationState]) -> TranslationState {
-    if states.is_empty()
-        || states
-            .iter()
-            .all(|state| *state == TranslationState::NoText)
-    {
-        TranslationState::NoText
-    } else if states
-        .iter()
-        .all(|s| matches!(s, TranslationState::Translated | TranslationState::NoText))
-    {
-        TranslationState::Translated
-    } else {
-        TranslationState::Untranslated
-    }
+    Ok(state)
 }

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 
-use super::handlers;
+use crate::handlers;
 
 pub async fn run(host: String, port: u16, cpu: bool) -> Result<()> {
     koharu_ml::init()

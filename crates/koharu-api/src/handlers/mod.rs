@@ -36,7 +36,7 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    pub async fn rasterizer(&self) -> Result<Arc<Rasterizer>> {
+    pub(crate) async fn rasterizer(&self) -> Result<Arc<Rasterizer>> {
         self.rasterizer
             .get_or_try_init(|| async {
                 let rasterizer = tokio::task::spawn_blocking(Rasterizer::new)
